@@ -55,7 +55,7 @@ The TL;DR is as follows:
        of our current bounds is needed if we want to support
        multi-parameter type classes; you can't write this using the
        current `T:...` notation, since you would need something like
-       <uint:Add<T>> (well, unless you rely on Add being
+       `<uint:Add<T>>` (well, unless you rely on Add being
        commutative)).
       
 Coherence now requires that the `for` type for all impls be unique.
