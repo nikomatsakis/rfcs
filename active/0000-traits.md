@@ -8,21 +8,24 @@ Cleanup the trait, method, and operator semantics so that they are
 well-defined and cover more use cases. A high-level summary of the
 changes is as follows:
 
-1. Full support for proper generic traits ("multiparameter type classes"),
-   including a simplified version of functional dependencies that may
-   evolve into associated types in the future.
-2. Generalize explicit self types beyond `&self` and `&mut self` etc,
+1. Introduce a `where` syntax as an alternative, and more flexible, means
+   of specifying trait bounds.
+2. Rephrase binary operator traits as being implemented over tuples.
+3. Generalize explicit self types beyond `&self` and `&mut self` etc,
    so that self-type declarations like `self: Rc<Self>` become possible.
-3. Expand coherence rules to operate recursively and distinguish
+4. Expand coherence rules to operate recursively and distinguish
    orphans more carefully.
-4. Revise vtable resolution algorithm to be gradual.
-5. Revise method resolution algorithm in terms of vtable resolution.
+5. Revise vtable resolution algorithm to be gradual.
+6. Revise method resolution algorithm in terms of vtable resolution.
 
 # Motivation
 
 The current trait system is ill-specified and inadequate. Its
 implementation dates from a rather different language. I want to clean
 it up and put it on a surer footing.
+
+Note: for those familiar with Haskell, there is a
+[brief comparison](#haskell) beween our two systems in the appendices.
 
 ## Use cases
 
@@ -102,12 +105,11 @@ implement `Base`.  This will lead to weird errors.
 
 *Addressed by:* Expanded coherence rules.
 
-The job of coherence is to ensure that, for any given set of type
-parameters, a given trait is implemented *at most once* (it may of
-course not be implemented at all). Currently, however, coherence is
-more conservative that it needs to be. This is partly because it
-doesn't take into account the very property that it itself is
-enforcing.
+The job of coherence is to ensure that there is at most one trait
+implementation for any given `Self` type (it may of course not be
+implemented at all). Currently, however, coherence is more
+conservative that it needs to be. This is partly because it doesn't
+take into account the very property that it itself is enforcing.
 
 The problems arise due to the "blanket impls" I discussed in the
 previous section. Consider the following two traits and a blanket impl:
@@ -190,23 +192,93 @@ property.  And the popularity and usefulness of blanket impls cannot
 be denied.  Therefore, I think this property ("always being able to
 add impls") is not especially useful or important.
 
+### Overwhelming type bounds
+
+Today, when declared a type parameter, one may introduce trait bounds
+following a `:`:
+
+    impl<K:Hash+Eq,V> HashMap<K, V> {
+        ..
+    }
+
+Sometimes the number of parameters can grow quite large, such as
+this example extracted from some rather generic code in `rustc`:
+
+    fn set_var_to_merged_bounds<T:Clone + InferStr + LatticeValue,
+                                V:Clone+Eq+ToStr+Vid+UnifyVid<Bounds<T>>>(
+                                &self,
+                                v_id: V,
+                                a: &Bounds<T>,
+                                b: &Bounds<T>,
+                                rank: uint)
+                                -> ures;
+                                
+I propose to permit a `where` clause that follows the generic
+parameterized item but precedes the `{`. This where clauses introduces
+a sequence of bounds of the form:
+
+    BOUND = TYPE ':' TRAIT { '+' TRAIT } [+]
+    
+Thus the first example could be rewritten:
+
+    impl<K,V> HashMap<K, V>
+        where K : Hash + Eq
+    {
+        ..
+    }
+    
+And the second example could be rewritten as follows. Note that the
+user has license to use the `+` notation as a shorthand or not (in
+this case, `+` is used for `V` but not with `T`; this is not meant to
+be an example of "best practice" formatting, just to show what is
+possible):
+
+    fn set_var_to_merged_bounds<T,V>(&self,
+                                     v_id: V,
+                                     a: &Bounds<T>,
+                                     b: &Bounds<T>,
+                                     rank: uint)
+                                     -> ures
+        where T:Clone,
+              T:InferStr,
+              T:LatticeValue,
+              V:Clone + Eq + ToStr + Vid + UnifyVid<Bounds<T>>,
+    {                                     
+        ..
+    }
+
+
+Naturally this applies to anything that can be parameterized: `impl`
+declarations, `fn` declarations, and possibly `trait` and `struct`
+definitions, though those do not current admit trait bounds. (Full
+details below.)
+
+The advantages of the `where` clause to my mind are (in order of importance):
+
+1. More expressive, this is crucial to the next section.
+2. Easier to read for complex types.
+3. Possibly necessary for full use of associated types (which are not
+   part of this RFC, but see [this appendix](#assoc) for some
+   discussion).
+
 ### Overloadable operators
 
-*Addressed by:* Proper generic traits.
+*Addressed by:* Where clause.
 
 Our current rules around operator overloading are too limiting.
 Consider the case of defining a mathematical library for modeling
-vectors. I might like to overload the `+` operator. Following mathematical
-convention, I'd like to say that:
+vectors. I might like to overload the `+` operator. Following common
+mathematical practice, I'd like to say that:
 
 1. Vector + vector yields a vector.
-2. Vector + scalar yields a vector.
-3. Scalar + vector yields a vector.
+2. Vector + scalar (or scalar + vector) yields a vector.
 
-Given that the trait for addition looks like:
+Given our current trait for addition, we cannot express this. The problem
+is that in our current trait, the `Self` type is the left-hand-side,
+and the right-hand-side is a second 
 
 ```
-trait Add<RHS,SUM> { ... }
+trait Add<RHS,SUM> { ... } // Current, inadequate def'n
 ```
 
 where `RHS` is the type of the right-hand-side argument and `SUM` is
@@ -338,16 +410,14 @@ like to write out a declarative and non-algorithmic specification for
 the rules too, but that is work in progress and beyond the scope of
 this RFC. Instead, I'll try to explain in "plain English".
 
-## Trait syntax
+## Where syntax
 
-Use the `in` keyword to designate *input* type parameters \[[1](#1)]:
+The grammar for a `where` clause would be as follows (BNF):
 
-    trait Add<in RHS, SUM> { ... }
-    
-The implicit `Self` type parameter is *always* considered an input.
-All explicit type parameters are considered outputs unless declared as
-inputs. Input type parameters must come *before* explicit type
-parameters. \[[3](#3)]
+    WHERE = 'where' BOUND { ',' BOUND } [,]
+    BOUND = TYPE ':' TRAIT { '+' TRAIT } [+]
+    TRAIT = Id [ '<' [ TYPE { ',' TYPE } [,] ] '>' ]
+    TYPE  = ... (same type grammar as today)
 
 ## Method self-type syntax
 
@@ -835,6 +905,17 @@ of `where` clause:
 Past experience also suggests that it's harder to figure out how to
 integrate this substitution into the type system rules themselves.
 
+## How does the proposed system related to Haskell? <a name=haskell>
+
+A generic trait in Rust is roughly equivalent to a Haskell
+multiparameter type class with an implied [functional dependency][fd]
+from the `Self` type to all other type parameters:
+
+    trait Foo<A,B> { ... } <-> class Foo self a b | self -> a b
+    
+Given the proposed syntax, one can express the more general case using
+tuple types for `Self`.
+
 # Footnotes
 
 <a name=1>
@@ -849,14 +930,6 @@ DST proposal.)
 **Note 2:** Note that the `DerefMut<T>` trait extends
 `Deref<T>`, so if a type supports mutable derefs, it must also support
 immutable derefs.
-
-<a name=3>
-
-**Note 3:** The restriction that inputs must precede outputs
-is not strictly necessary. I added it to keep options open concerning
-associated types and so forth. See the
-[Alternatives section](#alternatives), specifically the section on
-[associated types](#assoc).
 
 <a name=4>
 
@@ -877,4 +950,4 @@ discuss alternate rules that might allow us to lift the requirement
 that the receiver be named `self`.
 
 [prototype]: http://github.com/nikomatsakis/trait-resolution-prototype
-
+[fd]: http://www.haskell.org/haskellwiki/Functional_dependencies
