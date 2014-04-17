@@ -28,31 +28,28 @@ The TL;DR is as follows:
 
    1. Introduce where clauses (which actually we need either way, for full
       expressiveness, but you *really* need them if you go this route).
-
    2. Permit traits to explicitly declare a self type parameter, which can
       also be declared as a tuple: 
-
           // the first is sugar for the second:
           trait Foo { ... }
           trait Foo for Self { ... }
-
+          
           // maybe you don't find the name `Self` appropriate: 
           trait Foo for T { ... }
-
+          
           // maybe you need a tuple as your input type parameter
           // (you can also think of this as having more than one
           // input type parameter):
           trait Add<SUM> for (LHS, RHS) { ... }
-
     3. To put it all together, if I wanted to write (say) a generic
        "increment" function that adds 1 to its argument, it might look
        like:
 
-          fn inc<T,S>(t: T) -> S
-            where (uint, T) : Add<S>
-          {
-              1 + t
-          }
+           fn inc<T,S>(t: T) -> S
+             where (uint, T) : Add<S>
+           {
+               1 + t
+           }
 
        (This example also highlights why some sort of generalization
        of our current bounds is needed if we want to support
