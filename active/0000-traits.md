@@ -8,15 +8,19 @@ Cleanup the trait, method, and operator semantics so that they are
 well-defined and cover more use cases. A high-level summary of the
 changes is as follows:
 
-1. Introduce a `where` syntax as an alternative, and more flexible, means
-   of specifying trait bounds.
-2. Rephrase binary operator traits as being implemented over tuples.
-3. Generalize explicit self types beyond `&self` and `&mut self` etc,
+1. Introduce an extension to trait syntax for specifying that the `Self`
+   type must be a tuple of type parameters as a means of expressing
+   (the equivalent of) [multiparameter type classes][mtc].
+2. Introduce a `where` syntax as an alternative, and more flexible,
+   means of specifying trait bounds. The `where` syntax also replaces
+   the existing trait refinement syntax (`:`).
+3. Rephrase binary operator traits as being implemented over tuples.
+4. Generalize explicit self types beyond `&self` and `&mut self` etc,
    so that self-type declarations like `self: Rc<Self>` become possible.
-4. Expand coherence rules to operate recursively and distinguish
+5. Expand coherence rules to operate recursively and distinguish
    orphans more carefully.
-5. Revise vtable resolution algorithm to be gradual.
-6. Revise method resolution algorithm in terms of vtable resolution.
+6. Revise vtable resolution algorithm to be gradual.
+7. Revise method resolution algorithm in terms of vtable resolution.
 
 # Motivation
 
@@ -101,7 +105,7 @@ an `impl` is applicable. So it will decide, in this case, that the
 type `T` could implement `Foo` and then record for later that `T` must
 implement `Base`.  This will lead to weird errors.
 
-### Overly conservative coherence
+### Overly conservative coherence <a name=coherence>
 
 *Addressed by:* Expanded coherence rules.
 
@@ -194,6 +198,8 @@ add impls") is not especially useful or important.
 
 ### Overwhelming type bounds
 
+*Addressed by:* where syntax
+
 Today, when declared a type parameter, one may introduce trait bounds
 following a `:`:
 
@@ -217,8 +223,8 @@ I propose to permit a `where` clause that follows the generic
 parameterized item but precedes the `{`. This where clauses introduces
 a sequence of bounds of the form:
 
-    BOUND = TYPE ':' TRAIT { '+' TRAIT } [+]
-    
+    BOUND = TYPE ':' TRAIT_REF { '+' TRAIT_REF } [+]
+
 Thus the first example could be rewritten:
 
     impl<K,V> HashMap<K, V>
@@ -253,6 +259,11 @@ declarations, `fn` declarations, and possibly `trait` and `struct`
 definitions, though those do not current admit trait bounds. (Full
 details below.)
 
+I wrote this RFC with the assumption that the current syntax would
+stay and become sugar for the `where` syntax. I also discuss an
+alternative where we could just
+[remove the current syntax altogther](#onlywhere).
+
 The advantages of the `where` clause to my mind are (in order of importance):
 
 1. More expressive, this is crucial to the next section.
@@ -260,6 +271,14 @@ The advantages of the `where` clause to my mind are (in order of importance):
 3. Possibly necessary for full use of associated types (which are not
    part of this RFC, but see [this appendix](#assoc) for some
    discussion).
+
+Regarding the notion of being easier to read: obviously this will be
+something about which reasonable people can disagree. My personal take
+is that I find the precise list of traits that each type parameter
+implements to be of secondary importance compared to the names of the
+type parameters themselves. The current syntax fails to separate those
+two things and hence I find I am unable to take in complex fn
+signatures "at a glance". YMMV.
 
 ### Overloadable operators
 
@@ -273,37 +292,79 @@ mathematical practice, I'd like to say that:
 1. Vector + vector yields a vector.
 2. Vector + scalar (or scalar + vector) yields a vector.
 
-Given our current trait for addition, we cannot express this. The problem
-is that in our current trait, the `Self` type is the left-hand-side,
-and the right-hand-side is a second 
+Given our current trait for addition, we cannot express this. The
+problem is that in our current trait, the `Self` type is the
+left-hand-side, and the right-hand-side is a type parameter. This
+means that we can only (conveniently, at least) make a given type
+usable as the left-hand-side with exactly one right-hand-side type.
 
 ```
 trait Add<RHS,SUM> { ... } // Current, inadequate def'n
-```
-
-where `RHS` is the type of the right-hand-side argument and `SUM` is
-the type of their sum. One might then imagine translating the three
-kinds of addition for vectors into impls like so (note that the type
-after the `for` is the left-hand-side of the addition):
-
-```
+// Coherence forbids this:
 impl Add<Vector, Vector> for Vector { ... }
 impl Add<Scalar, Vector> for Vector { ... }
-impl Add<Vector, Vector> for Scalar { ... }
 ```
 
-Of course, if you do this, you'll get...well, it won't work. You'll
-get some coherence failures, I think, but in addition the algorithms
-and trait matching are just not up to the task of resolving these
-sorts of traits (see "Insufficient implementation").
+To address this, what I would like to do is to say that the trait is
+implemented not over the left-hand-side, but over a tuple of the left-
+and right-hand sides:
 
-I think however that this sort of impl *should* work, though not
-necessarily for *every* trait. Basically, trait type parameters can be
-divided into two groups: inputs and ouputs. An *input* type parameter
-is one that is used to decide what impl applies. An *output* type
-parameter is one that is determined by the impl. In the case of the
-`Add` trait, the *inputs* would be the implicit type parameter `Self`
-as well as `RHS`. The *output* would be the type `SUM`.
+```
+trait Add<SUM> { ... } // Step towards the final def'n
+impl Add<Vector> for (Vector,Vector) { ... }
+impl Add<Vector> for (Vector,Scalar) { ... }
+```
+
+Given the [expanded coherence rules](#coherence) this will work fine.
+However, just using this approach, we run into some challenges when we
+examine the trait definition in more detail. Consider the old
+definition (I have taken the liberty of using the expanded notation
+where the notion of a `self` parameter is generalized):
+
+```
+trait Add<RHS,SUM> {
+    fn add(lhs: &Self, rhs: &RHS) -> SUM;
+}
+```
+
+If I wanted to reproduce an equivalent definition, but where the
+`Self` type is a tuple of the LHS and RHS, I cannot. I am stuck with
+something like this:
+
+```
+trait Add<SUM> {
+    // Here `Self` will presumably be a tuple of & types.
+    fn add(inputs: &Self) -> SUM;
+}
+```
+
+The problem is that nothing in the `trait` definition states that the
+`Self` type *must* be a tuple. That's just a convention we choose to
+adopt in the implementations.
+
+Hence we can add a small bit of syntax to allow a trait to declare
+that its `Self` type must be a tuple: \[[3](#3)\]
+
+```
+trait Add<SUM> for (LHS, RHS) {
+    fn add(lhs: &LHS, rhs: &RHS) -> SUM;
+}
+```
+
+In this syntax, what comes after the `for` keyword must be either a
+single type parameter or a tuple of type parameter declarations (see
+the Detailed Design for the grammar). If the `for` clause for a trait
+is absent, it is equivalent to `for Self`.
+
+Another way of looking at this syntax is that it generalizes the
+`Self` type parameter so that (1) it can be explicitly named and (2)
+there can be more than one. You can either think of `Self` as a tuple
+of types, as I presented it earlier, or you can think of dividing the
+type parameters into *input* and *output* type parameters.  An *input*
+type parameter is one that is used to decide what impl applies. They
+appear after the keyword `for`. An *output* type parameter is one that
+is determined by the impl. In the case of the `Add` trait, the
+*inputs* would be `LHS` and `RHS`, and the *output* would be `SUM`.
 
 In Haskell, the distinction between *input* and *output* type
 parameters can be expressed in two mostly equivalent ways. One is
@@ -314,20 +375,6 @@ and `D` are outputs. (Functional dependencies are more general than
 this, though I know of no actual use case for their full generality.)
 *Asssociated types* are another means of drawing this distinction:
 here the *associated types* are outputs.
-
-In this proposal, I specify that the implicit type parameter `Self`
-is, by default, the only input type parameters. All explicit type
-parameters on a trait default to *output* unless prefixed by the `in`
-keyword. This means that, e.g., the trait `Add` should be defined as:
-
-```
-trait Add<in RHS, SUM> { ... }
-```
-
-The decision to make *output* be the default is data-driven: a quick
-look over existing traits, as well as existing practice from Haskell,
-shows that output type parameters are *much* more common. I have
-further discussion on the interaction with *associated types* below.
 
 ### Hokey implementation <a name=hokey>
 
@@ -410,14 +457,82 @@ like to write out a declarative and non-algorithmic specification for
 the rules too, but that is work in progress and beyond the scope of
 this RFC. Instead, I'll try to explain in "plain English".
 
-## Where syntax
+## Syntax changes
 
-The grammar for a `where` clause would be as follows (BNF):
+### Where clause
+
+The full grammar for a `where` clause is roughly:
 
     WHERE = 'where' BOUND { ',' BOUND } [,]
-    BOUND = TYPE ':' TRAIT { '+' TRAIT } [+]
-    TRAIT = Id [ '<' [ TYPE { ',' TYPE } [,] ] '>' ]
+    BOUND = TYPE ':' TRAIT_REF { '+' TRAIT_REF } [+]
+    
+Note that only a single TYPE is needed before the `BOUND`; if a trait
+is declared with multiple types after the `for` list, that is modeled
+internally as being implemented for a tuple type.
+
+### Fn declarations
+
+Functions can accept an optional `where` clause after the return type.
+
+### Impl declarations
+
+Implementations of a trait can accept an optional `where` clause after
+the self type:
+
+    impl<X> Foo for Bar
+      where X:Eq
+    { ... }
+
+### Struct and enum declarations
+
+Structure declarations can accept a `where` clause before the list of fields:
+
+    struct Foo<T>
+      where T:Copy
+    { ... }
+
+Enum declarations can accept a `where` clause before the list of variants:
+
+    enum Foo<T>
+      where T:Copy
+    { ... }
+
+### Trait declarations
+
+The BNF grammar for a trait declaration would become:
+
+    TRAIT = 'trait' Id
+              [ '<' [ TYPE { ',' TYPE } [,] ] '>' ]
+              [ 'for' FOR_TYPE ]
+              [ 'where' WHERE ]
+              '{' ... '}'
+    FOR_TYPE = TYPE
+             | '(' [ TYPE { ',' TYPE } [,] ] ')'
+    TRAIT_REFS = TRAIT_REF {',' TRAIT_REF} [,]
+    TRAIT_REF = Id [ '<' [ TYPE { ',' TYPE } [,] ] '>' ]
     TYPE  = ... (same type grammar as today)
+    TYPE_PARAMETER_DECL = ID [ ':' TRAIT_REFS ]
+
+Some examples:
+
+    // Equivalent: 
+    trait Foo { ... }
+    trait Foo for Self { ... }
+    
+    // Equivalent but using a different name for `X`:
+    trait Foo for X { ... }
+    
+    // What we now call a "supertrait":
+    trait Ord
+      where Self : Eq
+    {
+    }
+
+    // A more general case of supertrait inexpressible today:
+    trait Bar for (A, B) { ... }
+    trait Baz for (X, Y, Z)
+      where (X, Y) : Bar
+    { ... }
 
 ## Method self-type syntax
 
@@ -819,6 +934,24 @@ of the function. For details, please refer to the
 
 # Alternatives <a name=alternatives>
 
+## Do not support the old `:` syntax <a name=onlywhere>
+
+It is tempting to remove the existing bound syntax altogether and move
+to `where` clauses. Then one would write something like:
+
+    fn foo<T>(x: &T)
+      where T:Eq
+    {
+    }
+
+instead of `<T:Eq>`. In fact, we might even go further and drop the
+`:` altogether in favor of using the `for` syntax uniformly:
+
+    fn foo<T>(x: &T)
+      where Eq for T
+    {
+    }
+
 ## Autoderef and ambiguity <a name=ambig>
 
 The addition of a `Deref` trait makes autoderef complicated, because
@@ -896,13 +1029,14 @@ easily be expressed:
 
     fn foo<I:Iterator<Char>>(...) { ... }
     
-If using associated types, the equivalent would require some sort
-of `where` clause:
+If using associated types, the equivalent would require a generalization
+of the `where` clause:
 
     trait Iterator { type E; }
     fn foo<I:Iterator>(...) where I::E == Char { ... }
-    
-Past experience also suggests that it's harder to figure out how to
+
+We may opt to go this route, but I'm not 100% sure of how it works.
+Past experience suggests that it's harder to figure out how to
 integrate this substitution into the type system rules themselves.
 
 ## How does the proposed system related to Haskell? <a name=haskell>
@@ -951,3 +1085,4 @@ that the receiver be named `self`.
 
 [prototype]: http://github.com/nikomatsakis/trait-resolution-prototype
 [fd]: http://www.haskell.org/haskellwiki/Functional_dependencies
+[mtc]: http://www.haskell.org/haskellwiki/Multi-parameter_type_class
