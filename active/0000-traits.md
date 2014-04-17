@@ -41,15 +41,15 @@ The TL;DR is as follows:
           // (you can also think of this as having more than one
           // input type parameter):
           trait Add<SUM> for (LHS, RHS) { ... }
-    3. To put it all together, if I wanted to write (say) a generic
-       "increment" function that adds 1 to its argument, it might look
-       like:
+   3. To put it all together, if I wanted to write (say) a generic
+      "increment" function that adds 1 to its argument, it might look
+      like:
 
-           fn inc<T,S>(t: T) -> S
-             where (uint, T) : Add<S>
-           {
-               1 + t
-           }
+          fn inc<T,S>(t: T) -> S
+            where (uint, T) : Add<S>
+          {
+              1 + t
+          }
 
        (This example also highlights why some sort of generalization
        of our current bounds is needed if we want to support
