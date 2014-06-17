@@ -27,12 +27,8 @@
     - `|&mut: ...| expr` indicates that the closure implements `Fn`
     - `|&: ...| expr` indicates that the closure implements `FnShare`
     - `|: a, b, c| expr` indicates that the closure implements `FnOnce`.
-- Add syntactic sugar where `|T1, T2| -> R1` is translated to
-  a reference to one of the fn traits as follows:
-  - `|T1, ..., Tn| -> R` is translated to `Fn<(T1, ..., Tn), R>`
-  - `|&mut: T1, ..., Tn| -> R` is translated to `Fn<(T1, ..., Tn), R>`
-  - `|&: T1, ..., Tn| -> R` is translated to `FnShare<(T1, ..., Tn), R>`
-  - `|: T1, ..., Tn| -> R` is translated to `FnOnce<(T1, ..., Tn), R>`
+- Add syntactic sugar for types where `Foo(A,B):K -> C` is
+  translated to `Foo<(A,B),C>+K`.
   
 One aspect of closures that this RFC does *not* describe is that we
 must permit trait references to be universally quantified over regions
@@ -183,6 +179,19 @@ reborrows, see below). In a by-reference closure, the types of these
 fields will be a suitable reference (`&`, `&mut`, etc) to the
 variables being borrowed.
 
+### Self type specifier
+
+Every closure expression includes an optional self-type specifier.
+When present, this specifier indicates explicitly which trait the
+closure expression should implement:
+
+    |: args| expr     -> FnOnce
+    |&: args| expr    -> FnShare
+    |&mut: args| expr -> Fn
+
+If no self specifier is present, the default is `&mut:`. We may change
+to using inference in the future.
+
 ### By-value closures
 
 The default form for a closure is by-value. This implies that all
@@ -266,28 +275,32 @@ extensions follow:
   that rather than borrowing `context` to create the closure, we would
   borrow `context.variable_map` directly.
 
-## Closure sugar in trait references
+## Closure sugar in types and trait references
 
-The current type for closures, `|T1, T2| -> R`, will be repurposed as
-syntactic sugar for a reference to the appropriate `Fn` trait. This
-shorthand be used any place that a trait reference is appropriate. The
-full type will be written as one of the following:
+We will introduce a new means of specifying type parameters. Instead
+of writing `Fn<(A,B),C>`, one may now write `Foo(A,B) -> C`. The two
+are exactly equivalent.
 
-    <'a...'z> |T1...Tn|: K -> R
-    <'a...'z> |&mut: T1...Tn|: K -> R
-    <'a...'z> |&: T1...Tn|: K -> R
-    <'a...'z> |: T1...Tn|: K -> R
+The full conversion with all bells and whistles is that
+
+    <'a....'z> Foo(T1,...,Tn):K -> R
     
-Each of which would then be translated into the following trait
-references, respectively:
+will be translated to:
 
-    <'a...'z> Fn<(T1...Tn), R> + K
-    <'a...'z> Fn<(T1...Tn), R> + K
-    <'a...'z> FnShare<(T1...Tn), R> + K
-    <'a...'z> FnOnce<(T1...Tn), R> + K
+    <'a...'z> Foo<(T1...Tn), R> + K
 
 Note that the bound lifetimes `'a...'z` are not in scope for the bound
 `K`.
+
+This can of course be used to write a closure type like `Fn(int) ->
+uint`, but it can also be used to define convenient type
+definitions. For example, one might write a type alias `TaskBody` to
+refer to a boxed, sendable, call-one closure:
+
+    type TaskBody<A,R> = Box<FnOnce<A,R>:Send>
+
+You could now refer to a task that takes an `int` and returns a `f32`
+by writing `TaskBody(int) -> f32`.
 
 # Drawbacks
 
