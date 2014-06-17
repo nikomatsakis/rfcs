@@ -189,8 +189,14 @@ closure expression should implement:
     |&: args| expr    -> FnShare
     |&mut: args| expr -> Fn
 
-If no self specifier is present, the default is `&mut:`. We may change
-to using inference in the future.
+If no self specifier is present, we will use inference to determine
+the correct result. The idea is to first create a fresh type that
+represents the type of this closure. At the end of type check, we will
+check the trait obligations that are present on this type: there
+should be exactly one, representing one of the fn traits. If there are
+multiple constraints, we can elect the most general option (see the
+section on converting between closures) and then rely on the
+conversion impls to handle the other requirements.
 
 ### By-value closures
 
@@ -302,6 +308,28 @@ refer to a boxed, sendable, call-one closure:
 You could now refer to a task that takes an `int` and returns a `f32`
 by writing `TaskBody(int) -> f32`.
 
+## Converting between closure types
+
+We will supply the following impls for converting between the various
+closure types:
+
+    impl<A,R,T:Fn<A,R>> FnOnce<A,R> for T {
+        fn call_once(mut self, args: A) -> R {
+            self.call_mut(args)
+        }
+    }
+
+    impl<A,R,T:FnShare<A,R>> Fn<A,R> for T {
+        fn call(&mut self, args: A) -> R {
+            self.call_share(args)
+        }
+    }
+
+These impls reflect the fact that the various closure traits are
+ordered in terms of their generality. The existence of these impls has
+the side-effect that no one can implement more than one fn trait,
+because coherence will reject any such impl as overlapping.
+
 # Drawbacks
 
 This model is more complex than the existing model in some respects
@@ -365,62 +393,11 @@ is not specified, we can always tweak the rules if necessary (though
 there are advantages for tooling when the Rust ABI closely matches the
 native ABI).
 
-**Use inference to determine the self type of a closure rather than an
-annotation.** We retain this option for future expansion, but it is
-not clear whether we can always infer the self type of a
-closure. Moreover, using inference rather a default raises the
-question of what to do for a type like `|int| -> uint`, where
-inference is not possible.
-
-**Default to something other than `&mut self`.** It is our belief that
-this is the most common use case for closures.
-
 # Transition plan
 
 TBD. pcwalton is working furiously as we speak.
 
 # Unresolved questions
-
-**What if any relationship should there be between the closure
-traits?** On the one hand, there is clearly a relationship between the
-traits.  For example, given a `FnShare`, one can easily implement
-`Fn`:
-
-    impl<A,R,T:FnShare<A,R>> Fn<A,R> for T {
-        fn call(&mut self, args: A) -> R {
-            (&*self).call_share(args)
-        }
-    }
-
-Similarly, given a `Fn` or `FnShare`, you can implement `FnOnce`. From
-this, one might derive a subtrait relationship:
-
-    trait FnOnce { ... }
-    trait Fn : FnOnce { ... }
-    trait FnShare : Fn { ... }
-
-Employing this relationship, however, would require that any manual
-implement of `FnShare` or `Fn` must implement adapters for the other
-two traits, since a subtrait cannot provide a specialized default of
-supertrait methods (yet?). On the other hand, having no relationship
-between the traits limits reuse, at least without employing explicit
-adapters.
-
-Other alternatives that have been proposed to address the problem:
-
-- Use impls to implement the fn traits in terms of one another,
-  similar to what is shown above. The problem is that we would need to
-  implement `FnOnce` both for all `T` where `T:Fn` and for all `T`
-  where `T:FnShare`. This will yield coherence errors unless we extend
-  the language with a means to declare traits as mutually exclusive
-  (which might be valuable, but no such system has currently been
-  proposed nor agreed upon).
-
-- Have the compiler implement multiple traits for a single closure.
-  As with supertraits, this would require manual implements to
-  implement multiple traits. It would also require generic users to
-  write `T:Fn+FnMut` or else employ an explicit adapter. On the other
-  hand, it preserves the "one method per trait" rule described below.
 
 **Can we optimize away the trait vtable?** The runtime representation
 of a reference `&Trait` to a trait object (and hence, under this
