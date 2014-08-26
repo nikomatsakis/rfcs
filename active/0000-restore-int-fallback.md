@@ -44,7 +44,7 @@ automatically selected, we decided to fallback to our older behavior,
 and have integer/float literals be typed as `int`/`float` (this is also what Haskell
 does). Some time later, we did [various measurements][m] and found
 that in real world code this fallback was rarely used. Therefore, we
-decided that to remove the fallback.
+decided to remove the fallback.
 
 ## Experience with lack of fallback
 
