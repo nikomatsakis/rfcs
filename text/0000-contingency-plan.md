@@ -59,15 +59,15 @@ alternatives.
 
 ### "Just fix it"
 
-Most of the time, I think, it will make sense to just fix the problem.
-If the fix simply causes more code to compile or execute without
-crashing, then there is no problem at all. Otherwise, we should at
-minimum evaluate the impact of the fix on the crates found in the
-`crates.io` website (using e.g. the crater tool). If impact is found
-to be "small" (which this RFC does not attempt to precisely define),
-then the fix can be landed. In some cases, we may also open PRs
-against open source projects that workaround the breakage (perhaps in
-advance of landing the change itself).
+Frequently, I think, it will make sense to just fix the problem. If
+the fix simply causes more code to compile or execute without
+crashing, then there is no problem at all. Otherwise, we should
+evaluate the impact of the fix on the crates found in the `crates.io`
+website (using e.g. the crater tool). If impact is found to be "small"
+(which this RFC does not attempt to precisely define), then the fix
+can be landed. In some cases, we may also open PRs against open source
+projects that workaround the breakage (perhaps in advance of landing
+the change itself).
 
 As today, the commit message of any breaking change should include the
 term `[breaking-change]` along with a description of how to resolve
@@ -88,11 +88,56 @@ paying such close attention to the progress of the Rust project.
 ### "Deprecate and supply an alternative"
 
 This is the preferred alternative for those cases where the impact of
-a change is determined to be too large to "just fix it". The idea is
-to continue permittinguse 
+a change is determined to be too large to "just fix it". This approach
+is particularly relevant to "safe" APIs that are found to be, in fact,
+unsafe. The idea is to introduce a new, correct API and deprecate the
+older API. The older API will however remain available for use so that
+people have time to transition to the newer API.
 
+We propose using the same deprecation lint as for other situations,
+but a possible alternative is to use a distinct lint, so that people
+can permit normal deprecation but forbid deprecation due to memory
+safety violations.
 
 ### "Deprecate and opt-in to newer semantics"
+
+Unfortunately, sometimes it is not possible for the older and newer
+semantics to co-exist. For example, fixing bugs in the inference
+engine often entails adding a constraint into a complex system of
+constraints, and it is not necessarily possible to isolate the effect
+of that new constraint.  This implies that we cannot issue a lint for
+errors that result from the new constriant but errors for the
+remainder.
+
+To handle such cases, we propose adding an "opt-in" mechanism that
+allows Rust code to declare the version of rustc that it is being
+written against.  This same opt-in mechanism can be used for other
+almost-but-not-quite-backwards-compatible changes, such as introducing
+new keywords.
+
+The specific proposal is an attribute `#![rust_version="X.Y.Z"]` that
+can be attached to the crate. Every build of the Rust compiler will
+have built into it the current version as well as the oldest version
+that included an update to the type-safety rules. When the Rust
+compiler encounters such an attribute, it will compare the crate's
+declared version (`X.Y.Z`) against these builtin versions.
+
+- If the crate's declared version is newer than the version of the
+  compiler, issue a lint warning of some kind.
+- If the crate's declared version is older than the most recent
+  type-safety update, issue a deprecation warning.
+- Otherwise, proceed normally. The declared version will however
+  determine the set of keywords that are in scope.
+
+This version of rules implies that it is considered deprecated
+behavior to not opt-in to type-safety updates. However, usafe of
+crates that failed to opt-in is unaffected. This may be undesirable. A
+possible extension then is that the version number becomes part of the
+metadata, and linking against an external crate whose declared version
+is older than the most recent type-safety update is also considered
+deprecated behavior. This would increase the pressure on library
+authors to opt-in to newer versions, while permitting use of older
+libraries.
 
 # Drawbacks
 
@@ -122,6 +167,14 @@ to use older builds of Rust, which is bad for everyone.
 2. *Issue a new major release for such change.* This is basically the
 same as the previous option, but in a more semver-compliant fashion.
 In particular, it carries the same downsides.
+
+With regard to specifics, the following alternatives or possible
+extensions were described in the text above:
+
+- Deprecation due to memory safety might be considered a distinct lint
+  of its own.
+- Use of crates whose declared version does not include type-system
+  updates could be considered deprecated behavior.
 
 # Unresolved questions
 
