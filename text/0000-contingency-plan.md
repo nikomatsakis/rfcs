@@ -75,6 +75,20 @@ the problem, which helps those people who are affected to migrate
 their code. A description of the problem should also appear in the
 relevant subteam report.
 
+Here are some the criteria that make sense to consider when deciding
+whether to "just fix it":
+
+- Were many crates on `crates.io` affected?
+- Were particularly vital or widely used crates affected?
+- Does the change silently change the result of running the program,
+  affect whether code compiles, or potentially both?
+- What changes are needed to get code compiling again? Are those
+  changes obvious from the error message?
+  - Some errors are trivial to fix, others require subtle workarounds
+    or can affect APIs in more systemic ways. Also, bug fixes that
+    result in generic or cryptic error messages will be more
+    frustrating to fix, clearly.
+
 *Optional:* Of course, `crates.io` does not represent the sum total of
 Rust code.  There exist (or will exist) plenty of closed-source and
 private crates elsewhere. Ideally, a branch containing the breaking
@@ -107,11 +121,16 @@ engine often entails adding a constraint into a complex system of
 constraints, and it is not necessarily possible to isolate the effect
 of that new constraint.  This implies that we cannot issue a lint for
 errors that result from the new constriant but errors for the
-remainder.
+remainder. **In general, in these cases, we'd prefer to "just fix it"
+if possible, possibly preceded by a more-aggressive-than-normal
+outreach program to minimize breakage.** This is because maintaining
+more than one version of type-system rules is a burden.
 
-To handle such cases, we propose adding an "opt-in" mechanism that
-allows Rust code to declare the version of rustc that it is being
-written against.  This same opt-in mechanism can be used for other
+However, there are some changes that are more additive in nature, or
+where we'd prefer to permit a more phased rollout. To handle such
+cases, we propose adding an "opt-in" mechanism that allows Rust code
+to declare the version of rustc that it is being written against.
+This same opt-in mechanism can be used for other
 almost-but-not-quite-backwards-compatible changes, such as introducing
 new keywords.
 
@@ -138,6 +157,10 @@ is older than the most recent type-safety update is also considered
 deprecated behavior. This would increase the pressure on library
 authors to opt-in to newer versions, while permitting use of older
 libraries.
+
+Another alternative design is to list features by name instead of
+using a version number. The alternatives section below describes the
+reasoning that led us to adopt a version-number based design.
 
 # Drawbacks
 
@@ -175,6 +198,21 @@ extensions were described in the text above:
   of its own.
 - Use of crates whose declared version does not include type-system
   updates could be considered deprecated behavior.
+  
+Instead of using a version number to indicate opt-in to new keywords
+or language semantics, one might instead prefer a more keyword-based
+approach. For example, one could write `#![feature(foo)]` to opt in to
+the feature "foo" and its associated keywords and type rules, rather
+than `#![rust_version="1.2.3"]`. While using minimum version numbers
+is more opaque than named features, they do offer several advantages:
+
+1. Using named features, the list of features that must be attached to
+   Rust code will grow indefinitely, presuming your crate wants to
+   stay up to date.
+2. Named features presents a combinatoric testing problem, where we
+   should (in principle) test for all possible combinations of
+   features. In cases where new rust versions also involve tweaks to
+   the type system rules, this seems particularly risky.
 
 # Unresolved questions
 
