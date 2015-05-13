@@ -88,6 +88,7 @@ whether to "just fix it":
     or can affect APIs in more systemic ways. Also, bug fixes that
     result in generic or cryptic error messages will be more
     frustrating to fix, clearly.
+- Can the change 
 
 *Optional:* Of course, `crates.io` does not represent the sum total of
 Rust code.  There exist (or will exist) plenty of closed-source and
