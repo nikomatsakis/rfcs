@@ -5,34 +5,47 @@
 
 # Summary
 
-Detail a "contingency plan" for how we will handle soundness problems
-uncovered after the 1.0 release.
+This RFC has two main goals:
 
+- define what precisely constitutes a breaking change for the Rust language itself;
+- define a language versioning mechanism that extends the sorts of
+  changes we can make without causing compilation failures (for
+  example, adding new keywords).
+  
 # Motivation
 
-With the release of 1.0, the goal is that Rust code which compiles
-today will continue to compile into the future (at least until
-2.0). However, Rust also has the goal of being a safe language. This
-raises the obvious question: what happens if we realize that a
-soundness hole that permits safe code to trigger undefined behavior
-(e.g., a data race or use after free)? Of course we would like to
-close the hole, but that implies that some code which used to compile
-will no longer compile (indeed, this is the entire point of closing
-the hole!). A similar problem can arise with prominent compiler bugs:
-we may find that the compiler is simply doing the wrong thing, but
-people have come to rely on that wrong behavior; in that case, fixing
-the bug (which is clearly desirable) will also break code.
+With the release of 1.0, we need to establish clear policy on what
+precisely constitutes a "minor" vs "major" change to the language.
+**This RFC proposes limiting breaking changes to changes with
+soundness implications**: this includes both bug fixes in the compiler
+itself, as well as changes to the type system or RFCs that are
+necessary to close flaws uncovered later. The *detailed description*
+describes the steps to take when considering such a change.
 
-This RFC proposes various possible strategies for handling these kinds
-of situations, and describes the factors that will be used to decide
-which of the strategies is most appropriate in any given
-situation. The goal in general is to balance two priorities:
+However, there are other kinds of changes that we may want to make
+which feel like they *ought* to be possible, but which are in fact
+breaking changes. The simplest example is adding a new keyword to the
+language -- despite being a purely additive change, a new keyword can
+of course conflict with existing identifiers. Therefore, **the RFC
+proposes a simple annotation that allows crates to designate the
+version of the language they were written for**. This effectively
+permits some amount of breaking changes by making them "opt-in"
+through the version attribute.
 
-- **Rust should be safe.** In particular, it should be possible to
-  write Rust code and be assured that you are not accidentally relying
-  on known memory safety holes or bugs.
-- **Upgrades should be painless.** But, it should also be possible to
-  upgrade Rust to a new version with a minimum of fuss.
+However, even though the version attribute can be used to make
+breaking changes "opt-in" (and hence not really breaking), this is
+still a tool to be used with great caution. After all, just as we want
+upgrading Rust to be hassle-free, we want it to be hassle-free to
+upgrade a project to use the latest version of the
+language. Therefore, **the RFC also proposes guidelines on when it is
+appropriate to include an "opt-in" breaking change and when it is
+not**.
+
+One thing that is considered out of scope for this RFC is the question
+of when to release Rust 2.0 (or, more generally, a new major version
+of Rust). This RFC is focused on exploring the kinds of changes we can
+make within a single major version; the question of when to change
+major versions is complex enough to be worth considering separately.
 
 # Detailed design
 
