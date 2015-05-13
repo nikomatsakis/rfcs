@@ -49,6 +49,78 @@ major versions is complex enough to be worth considering separately.
 
 # Detailed design
 
+The detailed design is broken into two major section: how to address
+soundness changes, and how to address other, opt-in style changes. We
+do not discuss non-breaking changes here, since obviously those are
+safe.
+
+### Soundness changes
+
+When compiler bugs or soundness problems are encountered in the
+language itself (as opposed to in a library), the preferred strategy
+is simply to fix them, despite the fact that this may break code
+(meaning: make code that was compiling and doing one reasonable thing
+either stop compiling or start doing another thing). However, not all
+breakage is considered equal, and it's important to do this fix the
+right way so as to ease the transition.
+
+The first step is to evaluate the impact of the fix on the crates
+found in the `crates.io` website (using e.g. the crater tool). If
+impact is found to be "small" (which this RFC does not attempt to
+precisely define), then the fix can simply be landed. As today, the
+commit message of any breaking change should include the term
+`[breaking-change]` along with a description of how to resolve the
+problem, which helps those people who are affected to migrate their
+code. A description of the problem should also appear in the relevant
+subteam report.
+
+However, if we wish to minimize the impact, the following steps can
+optionally be taken:
+
+1. Identify important crates (such as those with many dependencies)
+   and work with the crate author to correct the code as quickly as
+   possible, ideally before the fix even lands.
+2. Work hard to ensure that the error message identifies the problem
+   clearly and suggests the appropriate solution.
+3. Provide some annotation that allows crates to "opt out" of the
+   stricter rule. For example, when we were working on the coherence
+   orphan rules, we included a `#[old_orphan_check]` annotation that
+   could be used to get the older semantics back. Use of this
+   annotation should be considered deprecated.
+   - While the change is still breaking, this at least makes it easy
+     for crates to update and get back to compiling status quickly.
+4. Begin with a deprecation or other warning before issuing a hard
+   error. In extreme cases, it might be nice to begin by issuing a
+   deprecation warning for the unsound behavior, and only make the
+   behavior a hard error after the deprecation has had time to
+   circulate. This gives people more time to update their crates.
+   However, this option may frequently not be available, because the
+   source of a compilation error is often hard to pin down with
+   precision.
+   
+Some of the factors that should be taken into consideration when
+deciding whether and how to minimize the impact of a fix:
+
+- How many crates on `crates.io` are affected?
+  - This is a general proxy for the overall impact (since of course
+    there will always be private crates that are not part of
+    crates.io).
+- Were particularly vital or widely used crates affected?
+  - This could indicate that the impact will be wider than the raw
+    number would suggest.
+- Does the change silently change the result of running the program,
+  or simply cause additional compilation failures?
+  - The latter, while frustrating, are easier to diagnose.
+- What changes are needed to get code compiling again? Are those
+  changes obvious from the error message?
+  - The more cryptic the error, the more frustrating it is when
+    compilation fails.
+
+### Opt-in changes
+
+For changes that are not soundness changes, an opt-in strategy should
+be used. This section describes
+
 The possible strategies are summarized below; for each strategy, there
 is also a corresponding subsection going into more detail.
 
@@ -71,47 +143,6 @@ The end of this section defines an overall workflow evaluating these
 alternatives.
 
 ### "Just fix it"
-
-Frequently, I think, it will make sense to just fix the problem. If
-the fix simply causes more code to compile or execute without
-crashing, then there is no problem at all. Otherwise, we should
-evaluate the impact of the fix on the crates found in the `crates.io`
-website (using e.g. the crater tool). If impact is found to be "small"
-(which this RFC does not attempt to precisely define), then the fix
-can be landed. In some cases, we may also open PRs against open source
-projects that workaround the breakage (perhaps in advance of landing
-the change itself).
-
-As today, the commit message of any breaking change should include the
-term `[breaking-change]` along with a description of how to resolve
-the problem, which helps those people who are affected to migrate
-their code. A description of the problem should also appear in the
-relevant subteam report.
-
-Here are some the criteria that make sense to consider when deciding
-whether to "just fix it":
-
-- Were many crates on `crates.io` affected?
-- Were particularly vital or widely used crates affected?
-- Does the change silently change the result of running the program,
-  affect whether code compiles, or potentially both?
-- What changes are needed to get code compiling again? Are those
-  changes obvious from the error message?
-  - Some errors are trivial to fix, others require subtle workarounds
-    or can affect APIs in more systemic ways. Also, bug fixes that
-    result in generic or cryptic error messages will be more
-    frustrating to fix, clearly.
-- How clear is it what changes are needed?
-
-*Optional:* Of course, `crates.io` does not represent the sum total of
-Rust code.  There exist (or will exist) plenty of closed-source and
-private crates elsewhere. Ideally, a branch containing the breaking
-change would also be advertised, so that the developers of those
-crates can test the impact and report back. However, this is not an
-official requirement of the RFC, because we wish to minimize the "red
-tape" required to land a patch. Furthermore, it is not clear how
-effective such a thing would be, since many developers are necessarily
-paying such close attention to the progress of the Rust project.
 
 ### "Deprecate and supply an alternative"
 
