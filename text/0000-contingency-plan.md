@@ -163,7 +163,7 @@ complex and should not be accepted.
 If the crate declares a version `X.Y` that is *newer* than the
 compiler itself, the compiler should simply issue a warning and
 proceed as if the crate had declared the compiler's version (i.e., the
-newer version the compielr knows about).
+newer version the compiler knows about).
 
 Note that if the changes introducing by the Rust version `X.Y` affect
 parsing, implementing these semantics may require some limited amount
@@ -197,6 +197,21 @@ identifiers, though the question of public identifiers is an
 interesting one (contextual keywords may suffice, or else perhaps some
 kind of escaping syntax -- we defer this question here for a later
 RFC).
+
+In the previous section on breaking changes, we identified various
+criteria that can be used to decide how to approach a breaking change
+(i.e., how far to go in attempting to mitigate the fallout). For the
+most part, those same criteria also apply when deciding whether to
+accept an "opt-in" change:
+
+- How many crates on `crates.io` would break if they "opted-in" to the
+  change, and would opting in require extensive changes?
+- Does the change silently change the result of running the program,
+  or simply cause additional compilation failures?
+  - Opt-in changes that silently change the result of running the
+    program are particularly unlikely to be accepted.
+- What changes are needed to get code compiling again? Are those
+  changes obvious from the error message?
 
 # Drawbacks
 
