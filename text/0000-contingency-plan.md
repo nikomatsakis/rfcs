@@ -295,6 +295,17 @@ mechanism, you would probably still want to deprecate `foo` in favor
 of a new function `bar` (since typing `foo` would be awkward), but it
 could still exist.
 
+**Should we add a mechanism for skipping over new syntax?** The
+current `#[cfg]` mechanism is applied *after* parsing. This implies
+that if we add new syntax, crates which employ that new syntax will
+not be parsable by older compilers, even if the modules that depend on
+that new syntax are disabled via `#[cfg]` directives. It may be useful
+to add some mechanism for informing the parser that it should skip
+over sections of the input (presumably based on token trees). One
+approach to this might just be modifying the existing `#[cfg]`
+directives so that they are applied during parsing rather than as a
+post-pass.
+
 **What precisely constitutes "small" impact?** This RFC does not
 attempt to define when the impact of a patch is "small" or "not
 small". We will have to develop guidelines over time based on
