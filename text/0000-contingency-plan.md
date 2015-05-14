@@ -19,10 +19,14 @@ precisely constitutes a "minor" vs "major" change to the language.
 **This RFC proposes limiting breaking changes to changes with
 soundness implications**: this includes both bug fixes in the compiler
 itself, as well as changes to the type system or RFCs that are
-necessary to close flaws uncovered later. The *detailed description*
-describes the steps to take when considering such a change.
+necessary to close flaws uncovered later.
 
-However, there are other kinds of changes that we may want to make
+However, simply landing all breaking changes immediately could be very
+disruptive to the ecosystem. Therefore, **the RFC also proposes
+specific measures to mitigate the impact of breaking changes**, and
+some criteria when those measures might be appropriate.
+
+Furthermore, there are other kinds of changes that we may want to make
 which feel like they *ought* to be possible, but which are in fact
 breaking changes. The simplest example is adding a new keyword to the
 language -- despite being a purely additive change, a new keyword can
@@ -41,11 +45,13 @@ language. Therefore, **the RFC also proposes guidelines on when it is
 appropriate to include an "opt-in" breaking change and when it is
 not**.
 
-One thing that is considered out of scope for this RFC is the question
-of when to release Rust 2.0 (or, more generally, a new major version
-of Rust). This RFC is focused on exploring the kinds of changes we can
-make within a single major version; the question of when to change
-major versions is complex enough to be worth considering separately.
+This RFC is focused specifically on the question of what kinds of
+changes we can make within a single major version (as well as some
+limited mechanisms that lay the groundwork for certain kinds of
+anticipated changes). It intentionally does not address the question
+of a release schedule for Rust 2.0, nor does it propose any new
+features itself. These topics are complex enough to be worth
+considering in separate RFCs.
 
 # Detailed design
 
@@ -82,13 +88,10 @@ optionally be taken:
    possible, ideally before the fix even lands.
 2. Work hard to ensure that the error message identifies the problem
    clearly and suggests the appropriate solution.
-3. Provide some annotation that allows crates to "opt out" of the
-   stricter rule. For example, when we were working on the coherence
-   orphan rules, we included a `#[old_orphan_check]` annotation that
-   could be used to get the older semantics back. Use of this
-   annotation should be considered deprecated.
-   - While the change is still breaking, this at least makes it easy
-     for crates to update and get back to compiling status quickly.
+3. Provide an annotation that allows for a scoped "opt out" of the
+   newer rules, as described below. While the change is still
+   breaking, this at least makes it easy for crates to update and get
+   back to compiling status quickly.
 4. Begin with a deprecation or other warning before issuing a hard
    error. In extreme cases, it might be nice to begin by issuing a
    deprecation warning for the unsound behavior, and only make the
@@ -96,7 +99,7 @@ optionally be taken:
    circulate. This gives people more time to update their crates.
    However, this option may frequently not be available, because the
    source of a compilation error is often hard to pin down with
-   precision.
+    precision.
    
 Some of the factors that should be taken into consideration when
 deciding whether and how to minimize the impact of a fix:
@@ -115,97 +118,85 @@ deciding whether and how to minimize the impact of a fix:
   changes obvious from the error message?
   - The more cryptic the error, the more frustrating it is when
     compilation fails.
+    
+#### Opting out
+
+In some cases, it may be useful to permit users to opt out of new type
+rules. The intention is that this "opt out" is used as a temporary
+crutch to make it easy to get the code up and running. Depending on
+the severity of the soundness fix, the "opt out" may be permanently
+available, or it could be removed in a later release. In either case,
+use of the "opt out" API would trigger the deprecation lint.
+
+One interesting wrinkle is that, when possible, we would like to
+ensure that it is possible for a library to opt-out of the newer rules
+and remain compilable with an older compiler. In the past when we've
+used temporary opt outs, we've done so by adding custom attributes
+(e.g., `#[old_orphan_check]`). However, if we were to do that now,
+it would cause the older compilers to emit an "unknown attribute" error.
+
+XXX describe a specific attribute
 
 ### Opt-in changes
 
-For changes that are not soundness changes, an opt-in strategy should
-be used. This section describes
+For breaking changes that are not related to soundness, an opt-in
+strategy should be used. This section describes an attribute for
+opting in to newer language updates, and gives guidelines on what
+kinds of changes should or should not be introduced in this fashion.
 
-The possible strategies are summarized below; for each strategy, there
-is also a corresponding subsection going into more detail.
+#### Rust version attribute
 
-1. **Just fix it.** The simplest strategy: just fix the bug and let
-  code break. This is appropriate when breakage would be limited in
-  scope or severity, or when the older behavior is an ICE, crash, or
-  something else that people would not be relying on.
-2. **Deprecate and supply an alternative.** The preferred
-  strategy for larger changes: introduce a deprecation warning
-  indicating that the API or language feature is unsound, and
-  recommend an alternative API. These deprecated APIs or constructs
-  can be fully forbidden at some later point when the community has
-  had time to migrate.
-3. **Deprecate and opt-in to newer semantics.** In some cases, it
-  may not be possible for the unsafe and safe alternatives to
-  co-exist. In that case, we can introduce an explicit opt-in to the
-  newer behavior, and deprecate code that does not use this opt-in.
-  
-The end of this section defines an overall workflow evaluating these
-alternatives.
+The specific proposal is an attribute `#![rust_version="X.Y"]` that
+can be attached to the crate; the version `X.Y` in this attribute is
+called the crate's "declared version". Every build of the Rust
+compiler will also have a version number built into it reflecting the
+current release.
 
-### "Just fix it"
+When a `#[rust_version="X.Y"]` attribute is encountered, the compiler
+will endeavor to produce the semantics of Rust "as it was" during
+version `X.Y`. RFCs that propose "opt-in breaking changes" should
+discuss how the older behavior can be supported in the compiler, but
+this is expected to be straightforward: if supporting older behavior
+is hard to do, it may indicate that the opt-in breaking change is too
+complex and should not be accepted.
 
-### "Deprecate and supply an alternative"
+If the crate declares a version `X.Y` that is *newer* than the
+compiler itself, the compiler should simply issue a warning and
+proceed as if the crate had declared the compiler's version (i.e., the
+newer version the compielr knows about).
 
-This is the preferred alternative for those cases where the impact of
-a change is determined to be too large to "just fix it". This approach
-is particularly relevant to "safe" APIs that are found to be, in fact,
-unsafe. The idea is to introduce a new, correct API and deprecate the
-older API. The older API will however remain available for use so that
-people have time to transition to the newer API.
+Note that if the changes introducing by the Rust version `X.Y` affect
+parsing, implementing these semantics may require some limited amount
+of feedback between the parser and the tokenizer, or else a limited
+"pre-parse" to scan the set of crate attributes and extract the
+version. For example, if version `X.Y` adds new keywords, the
+tokenizer will likely need to be configured appropriately with the
+proper set of keywords. For this reason, it may make sense to require
+that the `#![rust_version]` attribute appear *first* on the crate.
 
-We propose using the same deprecation lint as for other situations,
-but a possible alternative is to use a distinct lint, so that people
-can permit normal deprecation but forbid deprecation due to memory
-safety violations.
+#### When opt-in changes are appropriate
 
-### "Deprecate and opt-in to newer semantics"
+Opt-in changes allow us to greatly expand the scope of the kinds of
+additions we can make without breaking existing code, but they are not
+applicable in all situations. A good rule of thumb is that an opt-in
+change is only appropriate if the exact effect of the older code can
+be easily recreated in the newer system with only surface changes to
+the syntax.
 
-Unfortunately, sometimes it is not possible for the older and newer
-semantics to co-exist. For example, fixing bugs in the inference
-engine often entails adding a constraint into a complex system of
-constraints, and it is not necessarily possible to isolate the effect
-of that new constraint.  This implies that we cannot issue a lint for
-errors that result from the new constriant but errors for the
-remainder. **In general, in these cases, we'd prefer to "just fix it"
-if possible, possibly preceded by a more-aggressive-than-normal
-outreach program to minimize breakage.** This is because maintaining
-more than one version of type-system rules is a burden.
+Another view is that opt-in changes are appropriate if those changes
+do not affect the "abstract AST" of your Rust program. In other words,
+existing Rust syntax is just a serialization of a more idealized view
+of the syntax, in which there are no conflicts between keywords and
+identifiers, syntactic sugar is expanded, and so forth. Opt-in changes
+might affect the translation into this abstract AST, but should not
+affect the semantics of the AST itself at a deeper level.
 
-However, there are some changes that are more additive in nature, or
-where we'd prefer to permit a more phased rollout. To handle such
-cases, we propose adding an "opt-in" mechanism that allows Rust code
-to declare the version of rustc that it is being written against.
-This same opt-in mechanism can be used for other
-almost-but-not-quite-backwards-compatible changes, such as introducing
-new keywords.
-
-The specific proposal is an attribute `#![rust_version="X.Y.Z"]` that
-can be attached to the crate. Every build of the Rust compiler will
-have built into it the current version as well as the oldest version
-that included an update to the type-safety rules. When the Rust
-compiler encounters such an attribute, it will compare the crate's
-declared version (`X.Y.Z`) against these builtin versions.
-
-- If the crate's declared version is newer than the version of the
-  compiler, issue a lint warning of some kind.
-- If the crate's declared version is older than the most recent
-  type-safety update, issue a deprecation warning.
-- Otherwise, proceed normally. The declared version will however
-  determine the set of keywords that are in scope.
-
-This version of rules implies that it is considered deprecated
-behavior to not opt-in to type-safety updates. However, usafe of
-crates that failed to opt-in is unaffected. This may be undesirable. A
-possible extension then is that the version number becomes part of the
-metadata, and linking against an external crate whose declared version
-is older than the most recent type-safety update is also considered
-deprecated behavior. This would increase the pressure on library
-authors to opt-in to newer versions, while permitting use of older
-libraries.
-
-Another alternative design is to list features by name instead of
-using a version number. The alternatives section below describes the
-reasoning that led us to adopt a version-number based design.
+So, for example, the conflict between new keywords and existing
+identifiers can (generally) be trivially worked around by renaming
+identifiers, though the question of public identifiers is an
+interesting one (contextual keywords may suffice, or else perhaps some
+kind of escaping syntax -- we defer this question here for a later
+RFC).
 
 # Drawbacks
 
@@ -224,42 +215,70 @@ onerous. We may want to consider a policy for dropping older,
 deprecated type-system rules after some time, as discussed in the
 section on *unresolved questions*.
 
+## Notes on phasing
+
 # Alternatives
 
-In terms of the overall scheme, there are two primary alternatives:
+**Rather than having a means to opt-in to minor breaking changes, one
+might consider simply issuing a new major release for every such
+change.** This seems like to have two potential negative effects. It
+may simply cause us to not make some of the changes we would make
+otherwise, or work harder to fit them within the existing syntactic
+constraints. It may also serve to dilute the meaning of issuing a new
+major version, since even additive changes that do not affect existing
+code in any meaningful way would result in a major release. One would
+then be tempted to have some *additional* numbering scheme, PR blitz,
+or other means to notify people when a new major version is coming
+that indicates deeper changes.
 
-1. *Just fix everything.* This ensures Rust is maximally safe, but at
-the cost of compatibility. It doesn't give people a good migration
-path and seems likely to divide the ecosystem so that people continue
-to use older builds of Rust, which is bad for everyone.
-2. *Issue a new major release for such change.* This is basically the
-same as the previous option, but in a more semver-compliant fashion.
-In particular, it carries the same downsides.
+**Rather than simply fixing soundness bugs, we could use the opt-in
+mechanism to fix them conditionally.** This was initially considered
+as an option, but eventually rejected for the following reasons:
 
-With regard to specifics, the following alternatives or possible
-extensions were described in the text above:
+- This would effectively cause a deeper split between minor versions;
+  currently, opt-in is limited to "surface changes" only, but allowing
+  opt-in to affect the type system feels like it would be creating two
+  distinct languages.
+- It seems likely that all users of Rust will want to know that their code
+  is sound and would not want to be working with unsafe constructs or bugs.
+- Users may choose not to opt-in to newer versions because they do not
+  need the new features introduced there or because they wish to
+  preserve compatibility with older compilers. It would be sad for
+  them to lose the benefits of bug fixes as well.
+- We already have several mitigation measures, such as opt-out or
+  temporary deprecation, that can be used to ease the transition
+  around a soundness fix. Moreover, separating out new type rules so
+  that they can be "opted into" can be very difficult and would
+  complicate the compiler internally; it would also make it harder to
+  reason about the type system as a whole.
 
-- Deprecation due to memory safety might be considered a distinct lint
-  of its own.
-- Use of crates whose declared version does not include type-system
-  updates could be considered deprecated behavior.
-  
-Instead of using a version number to indicate opt-in to new keywords
-or language semantics, one might instead prefer a more keyword-based
-approach. For example, one could write `#![feature(foo)]` to opt in to
-the feature "foo" and its associated keywords and type rules, rather
-than `#![rust_version="1.2.3"]`. While using minimum version numbers
-is more opaque than named features, they do offer several advantages:
+**Rather than using a version number to opt-in to minor changes, one
+might consider using the existing feature mechanism.** For example,
+one could write `#![feature(foo)]` to opt in to the feature "foo" and
+its associated keywords and type rules, rather than
+`#![rust_version="1.2.3"]`. While using minimum version numbers is
+more opaque than named features, they do offer several advantages:
 
 1. Using named features, the list of features that must be attached to
    Rust code will grow indefinitely, presuming your crate wants to
    stay up to date.
-2. Named features presents a combinatoric testing problem, where we
+2. Using a version attribute preserves a mental separation between
+   "experimental work" (feature gates) and stable, new features.
+3. Named features present a combinatoric testing problem, where we
    should (in principle) test for all possible combinations of
-   features. In cases where new rust versions also involve tweaks to
-   the type system rules, this seems particularly risky.
-
+   features.
+   
 # Unresolved questions
+
+**Should we add a mechanism for "escaping" keywords?"** We may need a
+mechanism for escaping keywords in the future. Imagine you have a
+public function named `foo`, and we add a keyword `foo`. Now, if you
+opt in to the newer version of Rust, your function declarative is
+illegal: but if you rename the function `foo`, you are making a
+breaking change, which you may not wish to do. If we had an escaping
+mechanism, you would probably still want to deprecate `foo` in favor
+of a new function `bar` (since typing `foo` would be awkward), but it
+could still exist.
 
 **What precisely constitutes "small" impact?** This RFC does not
 attempt to define when the impact of a patch is "small" or "not
