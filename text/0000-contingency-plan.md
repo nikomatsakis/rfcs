@@ -273,7 +273,7 @@ more opaque than named features, they do offer several advantages:
 **Should we add a mechanism for "escaping" keywords?"** We may need a
 mechanism for escaping keywords in the future. Imagine you have a
 public function named `foo`, and we add a keyword `foo`. Now, if you
-opt in to the newer version of Rust, your function declarative is
+opt in to the newer version of Rust, your function declaration is
 illegal: but if you rename the function `foo`, you are making a
 breaking change, which you may not wish to do. If we had an escaping
 mechanism, you would probably still want to deprecate `foo` in favor
