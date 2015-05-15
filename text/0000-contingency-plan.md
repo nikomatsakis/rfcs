@@ -170,18 +170,18 @@ Known areas where change is expected include the following:
   to unsoundness in some cases (see [#23442]).
 - The trait selection algorithm is expected to be improved and made more complete over time.
   It is possible that this will affect existing code.
-- Overflow semantics: in particular, we may have missed some cases.
+- [Overflow semantics][RFC 560]: in particular, we may have missed some cases.
 - Memory allocation in unsafe code is currently unstable. We expect to
   be defining safe interfaces as part of the work on supporting
   tracing garbage collectors (see [#415]).
 - The treatment of hygiene in macros is uneven (see [#22462], [#24278]). In some cases,
   changes here may be backwards compatible, or may be more appropriate only with explicit opt-in
   (or perhaps an alternate macro system altogether).
-- The layout of data structures is explicit to change over time unless they are annotated
+- The layout of data structures is expected to change over time unless they are annotated
   with a `#[repr(C)]` attribute.
-- Lints will evolve over time (both the lints that are enabled and the precise cases that
-  lints catch). We expect to introduce a 'means to limit the effect of these changes
-  on dependencies][#1029].
+- Lints will evolve over time (both the lints that are enabled and the
+  precise cases that lints catch). We expect to introduce a
+  [means to limit the effect of these changes on dependencies][#1029].
 - Stack overflow is currently detected via a segmented stack check
   prologue and results in an abort. We expect to experiment with a
   system based on guard pages in the future.
@@ -422,3 +422,4 @@ introduce an attribute in advance we will not have this problem.
 [#22462]: https://github.com/rust-lang/rust/issues/22462#issuecomment-81756673
 [#24278]: https://github.com/rust-lang/rust/issues/24278
 [#1029]: https://github.com/rust-lang/rfcs/issues/1029
+[RFC 560]: https://github.com/rust-lang/rfcs/pull/560
