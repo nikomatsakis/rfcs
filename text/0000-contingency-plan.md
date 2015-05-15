@@ -15,7 +15,8 @@ This RFC has two main goals:
 # Motivation
 
 With the release of 1.0, we need to establish clear policy on what
-precisely constitutes a "minor" vs "major" change to the language.
+precisely constitutes a "minor" vs "major" change to the Rust language
+itself (as opposed to libraries, which are covered by [RFC 1105]).
 **This RFC proposes limiting breaking changes to changes with
 soundness implications**: this includes both bug fixes in the compiler
 itself, as well as changes to the type system or RFCs that are
@@ -38,12 +39,9 @@ through the version attribute.
 
 However, even though the version attribute can be used to make
 breaking changes "opt-in" (and hence not really breaking), this is
-still a tool to be used with great caution. After all, just as we want
-upgrading Rust to be hassle-free, we want it to be hassle-free to
-upgrade a project to use the latest version of the
-language. Therefore, **the RFC also proposes guidelines on when it is
-appropriate to include an "opt-in" breaking change and when it is
-not**.
+still a tool to be used with great caution. Therefore, **the RFC also
+proposes guidelines on when it is appropriate to include an "opt-in"
+breaking change and when it is not**.
 
 This RFC is focused specifically on the question of what kinds of
 changes we can make within a single major version (as well as some
@@ -63,14 +61,11 @@ safe.
 ### Soundness changes
 
 When compiler bugs or soundness problems are encountered in the
-language itself (as opposed to in a library), the preferred strategy
-is simply to fix them, despite the fact that this may break code
-(meaning: make code that was compiling and doing one reasonable thing
-either stop compiling or start doing another thing). However, not all
-breakage is considered equal, and it's important to do this fix the
-right way so as to ease the transition.
+language itself (as opposed to in a library), clearly they ought to be
+fixed. However, it is important to fix them in such a way as to
+minimize the impact on the ecosystem.
 
-The first step is to evaluate the impact of the fix on the crates
+The first step then is to evaluate the impact of the fix on the crates
 found in the `crates.io` website (using e.g. the crater tool). If
 impact is found to be "small" (which this RFC does not attempt to
 precisely define), then the fix can simply be landed. As today, the
@@ -80,8 +75,8 @@ problem, which helps those people who are affected to migrate their
 code. A description of the problem should also appear in the relevant
 subteam report.
 
-However, if we wish to minimize the impact, the following steps can
-optionally be taken:
+In cases where the impact seems larger, the following steps can be
+taken to ease the transition:
 
 1. Identify important crates (such as those with many dependencies)
    and work with the crate author to correct the code as quickly as
@@ -128,21 +123,92 @@ the severity of the soundness fix, the "opt out" may be permanently
 available, or it could be removed in a later release. In either case,
 use of the "opt out" API would trigger the deprecation lint.
 
-One interesting wrinkle is that, when possible, we would like to
-ensure that it is possible for a library to opt-out of the newer rules
-and remain compilable with an older compiler. In the past when we've
-used temporary opt outs, we've done so by adding custom attributes
-(e.g., `#[old_orphan_check]`). However, if we were to do that now,
-it would cause the older compilers to emit an "unknown attribute" error.
+#### Changes that alter dynamic semantics versus typing rules
 
-XXX describe a specific attribute
+In some cases, fixing a bug may not cause crates to stop compiling,
+but rather will cause them to silently start doing something different
+than they were doing before. In cases like these, the same principle
+of using mitigation measures to lessen the impact (and ease the
+transition) applies, but the precise strategy to be used will have to
+be worked out on a more case-by-case basis. This is particularly
+relevant to the underspecified areas of the language described in the
+next section.
+
+Our approach to handling [dynamic drop][RFC 320] is a good
+example. Because we expect that moving to the complete non-zeroing
+dynamic drop semantics will break code, we've made an intermediate
+change that
+[altered the compiler to fill with use a non-zero value](https://github.com/rust-lang/rust/pull/23535),
+which helps to expose code that was implicitly relying on the current
+behavior (much of which has since been restructured in a more
+future-proof way).
+
+#### Underspecified language semantics
+
+There are a number of areas where the precise language semantics are
+currently somewhat underspecified. Over time, we expect to be fully
+defining the semantics of all of these areas. This may cause some
+existing code -- and in particular existing unsafe code -- to break or
+become invalid. Changes of this nature should be treated as soundness
+changes, meaning that we should attempt to mitigate the impact and
+ease the transition wherever possible.
+
+Known areas where change is expected include the following:
+
+- Destructors semantics:
+  - We plan to stop zeroing data and instead use marker flags on the stack,
+    as specified in [RFC 320]. This may affect destructors that rely on ovewriting
+    memory or using the `unsafe_no_drop_flag` attribute.
+  - Currently, panicing in a destructor can cause unintentional memory
+    leaks and other poor behavior (c.f. [#14875], [#16135]). We are
+    likely to make panic in a destructor simply abort, but the precise
+    mechanism is not yet decided.
+  - Order of dtor execution within a data structure is somewhat
+    inconsistent (c.f. [#744]).
+- The legal aliasing rules between unsafe pointers is not fully settled (c.f. [#19733]).
+- The interplay of assoc types and lifetimes is not fully settled and can lead
+  to unsoundness in some cases (c.f. [#23442]).
+- The trait selection algorithm is expected to be improved and made more complete over time.
+  It is possible that this will affect existing code.
+- Overflow semantics: in particular, we may have missed some cases.
+- Memory allocation in unsafe code is currently unstable. We expect to
+  be defining safe interfaces as part of the work on supporting
+  tracing garbage collectors (c.f. [#415]).
+- The treatment of hygiene in macros is uneven (e.f., [#22462], [#24278]). In some cases,
+  changes here may be backwards compatible, or may be more appropriate only with explicit opt-in
+  (or perhaps an alternate macro system altogether).
+- The layout of data structures is explicit to change over time unless they are annotated
+  with a `#[repr(C)]` attribute.
+- Lints will evolve over time (both the lints that are enabled and the precise cases that
+  lints catch). We expect to introduce a 'means to limit the effect of these changes
+  on dependencies][#1029].
+- Stack overflow is currently detected via a segmented stack check
+  prologue and results in an abort. We expect to experiment with a
+  system based on guard pages in the future.
+- We currently abort the process on OOM conditions (exceeding the heap space, overflowing
+  the stack). We may attempt to panic in such cases instead if possible.
+- Some details of type inference may change. For example, we expect to
+  implement the fallback mechanism described in [RFC 213], and we may
+  wish to make minor changes to accommodate overloaded integer
+  literals. In some cases, type inferences changes may be better
+  handled via explicit opt-in.
+
+(Although it is not directly covered by this RFC, it's worth noting in
+passing that some of the CLI flags to the compiler may change in the
+future as well. The `-Z` flags are of course explicitly unstable, but
+some of the `-C`, rustdoc, and linker-specific flags are expected to
+evolve over time.)
 
 ### Opt-in changes
 
-For breaking changes that are not related to soundness, an opt-in
-strategy should be used. This section describes an attribute for
-opting in to newer language updates, and gives guidelines on what
-kinds of changes should or should not be introduced in this fashion.
+For breaking changes that are not related to soundness or language
+semantics, but are still deemed desirable, an opt-in strategy can be
+used instead. This section describes an attribute for opting in to
+newer language updates, and gives guidelines on what kinds of changes
+should or should not be introduced in this fashion.
+
+We use the term *"opt-in changes"* to refer to changes that would be
+breaking changes, but are not because of the opt-in mechanism.
 
 #### Rust version attribute
 
@@ -154,11 +220,11 @@ current release.
 
 When a `#[rust_version="X.Y"]` attribute is encountered, the compiler
 will endeavor to produce the semantics of Rust "as it was" during
-version `X.Y`. RFCs that propose "opt-in breaking changes" should
-discuss how the older behavior can be supported in the compiler, but
-this is expected to be straightforward: if supporting older behavior
-is hard to do, it may indicate that the opt-in breaking change is too
-complex and should not be accepted.
+version `X.Y`. RFCs that propose opt-in changes should discuss how the
+older behavior can be supported in the compiler, but this is expected
+to be straightforward: if supporting older behavior is hard to do, it
+may indicate that the opt-in change is too complex and should not be
+accepted.
 
 If the crate declares a version `X.Y` that is *newer* than the
 compiler itself, the compiler should simply issue a warning and
@@ -189,7 +255,9 @@ existing Rust syntax is just a serialization of a more idealized view
 of the syntax, in which there are no conflicts between keywords and
 identifiers, syntactic sugar is expanded, and so forth. Opt-in changes
 might affect the translation into this abstract AST, but should not
-affect the semantics of the AST itself at a deeper level.
+affect the semantics of the AST itself at a deeper level. This concept
+of an idealized AST is analagous to the "elaborated syntax" described
+in [RFC 1105], except that it is at a conceptual level.
 
 So, for example, the conflict between new keywords and existing
 identifiers can (generally) be trivially worked around by renaming
@@ -234,17 +302,18 @@ section on *unresolved questions*.
 
 # Alternatives
 
-**Rather than having a means to opt-in to minor breaking changes, one
-might consider simply issuing a new major release for every such
-change.** This seems like to have two potential negative effects. It
-may simply cause us to not make some of the changes we would make
-otherwise, or work harder to fit them within the existing syntactic
-constraints. It may also serve to dilute the meaning of issuing a new
-major version, since even additive changes that do not affect existing
-code in any meaningful way would result in a major release. One would
-then be tempted to have some *additional* numbering scheme, PR blitz,
-or other means to notify people when a new major version is coming
-that indicates deeper changes.
+**Rather than supporting opt-in changes, one might consider simply
+issuing a new major release for every such change.** Put simply,
+though, issuing a new major release just because we want to have a new
+keyword feels like overkill. This seems like to have two potential
+negative effects. It may simply cause us to not make some of the
+changes we would make otherwise, or work harder to fit them within the
+existing syntactic constraints. It may also serve to dilute the
+meaning of issuing a new major version, since even additive changes
+that do not affect existing code in any meaningful way would result in
+a major release. One would then be tempted to have some *additional*
+numbering scheme, PR blitz, or other means to notify people when a new
+major version is coming that indicates deeper changes.
 
 **Rather than simply fixing soundness bugs, we could use the opt-in
 mechanism to fix them conditionally.** This was initially considered
@@ -274,26 +343,36 @@ its associated keywords and type rules, rather than
 `#![rust_version="1.2.3"]`. While using minimum version numbers is
 more opaque than named features, they do offer several advantages:
 
-1. Using named features, the list of features that must be attached to
+1. Using a version number alone makes it easy to think about what
+   version of Rust you are using as a conceptual unit, rather than
+   choosing features "a la carte".
+2. Using named features, the list of features that must be attached to
    Rust code will grow indefinitely, presuming your crate wants to
    stay up to date.
-2. Using a version attribute preserves a mental separation between
+3. Using a version attribute preserves a mental separation between
    "experimental work" (feature gates) and stable, new features.
-3. Named features present a combinatoric testing problem, where we
+4. Named features present a combinatoric testing problem, where we
    should (in principle) test for all possible combinations of
    features.
    
 # Unresolved questions
+
+**Can (and should) we give a more precise definition for compiler bugs
+and soundness problems?** The current text is vague on what precisely
+constitutes a compiler bug and soundness change. It may be worth
+defining more precisely, though likely this would be best done as part
+of writing up a more thorough (and authoritative) Rust reference
+manual.
 
 **Should we add a mechanism for "escaping" keywords?"** We may need a
 mechanism for escaping keywords in the future. Imagine you have a
 public function named `foo`, and we add a keyword `foo`. Now, if you
 opt in to the newer version of Rust, your function declaration is
 illegal: but if you rename the function `foo`, you are making a
-breaking change, which you may not wish to do. If we had an escaping
-mechanism, you would probably still want to deprecate `foo` in favor
-of a new function `bar` (since typing `foo` would be awkward), but it
-could still exist.
+breaking change for your clients, which you may not wish to do. If we
+had an escaping mechanism, you would probably still want to deprecate
+`foo` in favor of a new function `bar` (since typing `foo` would be
+awkward), but it could still exist.
 
 **Should we add a mechanism for skipping over new syntax?** The
 current `#[cfg]` mechanism is applied *after* parsing. This implies
@@ -314,30 +393,32 @@ observe on `crates.io` will be of the total breakage that will occur:
 it is certainly possible that all crates on `crates.io` work fine, but
 the change still breaks a large body of code we do not have access to.
 
-**When and how should we remove deprecated behavior?** At some point
-we will want to remove deprecate content; this is particular true of
-type-system rules, since supporting those can greatly complicate the
-compiler implementation (supporting older libraries is usually, but
-not always, relatively painless).
-
-One option for removing deprecated content is to declare a new semver
-version. If there are deprecated libraries that still have significant
-use, we could even move them out of `std` and into external crates
-that are still available. This would be a backwards incompatible
-change but would make it easier still for people to upgrade. Whether
-this is appropriate probably depends on the severity and other
-particulars of the problem.
-
-Another option would be to reassess the impact of removing the
-deprecated behavior, just as we would do for a new breaking change. If
-we find that the impact is sufficiently low that the "just fix it"
-option applies, we could simply remove the deprecated behavior at that
-time without declaring a new major version.
-
 **Should deprecation due to unsoundness have a special lint?** We may
 not want to use the same deprecation lint for unsoundness that we use
 for everything else.
 
-**Should this RFC have been named 'How I learned to stop worrying and
-love the lint'?** I sort of thought so, but I feared that nobody would
-know what the RFC was about.
+**What attribute should we use to "opt out" of soundness changes?**
+The section on breaking changes indicated that it may sometimes be
+appropriate to includ an "opt out" that people can use to temporarily
+revert to older, unsound type rules, but did not specify precisely
+what that opt-out should look like. Ideally, we would identify a
+specific attribute in advance that will be used for such purposes.  In
+the past, we have simply created ad-hoc attributes (e.g.,
+`#[old_orphan_check]`), but because custom attributes are forbidden by
+stable Rust, this has the unfortunate side-effect of meaning that code
+which opts out of the newer rules cannot be compiled on older
+compilers (even though it's using the older type system rules). If we
+introduce an attribute in advance we will not have this problem.
+
+[RFC 1105]: https://github.com/rust-lang/rfcs/pull/1105
+[RFC 320]: https://github.com/rust-lang/rfcs/pull/320
+[#774]: https://github.com/rust-lang/rfcs/issues/744
+[#14875]: https://github.com/rust-lang/rust/issues/14875
+[#16135]: https://github.com/rust-lang/rust/issues/16135
+[#19733]: https://github.com/rust-lang/rust/issues/19733
+[#23442]: https://github.com/rust-lang/rust/issues/23442
+[RFC 213]: https://github.com/rust-lang/rfcs/pull/213
+[#415]: https://github.com/rust-lang/rfcs/issues/415
+[#22462]: https://github.com/rust-lang/rust/issues/22462#issuecomment-81756673
+[#24278]: https://github.com/rust-lang/rust/issues/24278
+[#1029]: https://github.com/rust-lang/rfcs/issues/1029
