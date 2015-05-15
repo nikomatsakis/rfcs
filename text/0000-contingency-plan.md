@@ -160,21 +160,21 @@ Known areas where change is expected include the following:
     as specified in [RFC 320]. This may affect destructors that rely on ovewriting
     memory or using the `unsafe_no_drop_flag` attribute.
   - Currently, panicing in a destructor can cause unintentional memory
-    leaks and other poor behavior (c.f. [#14875], [#16135]). We are
+    leaks and other poor behavior (see [#14875], [#16135]). We are
     likely to make panic in a destructor simply abort, but the precise
     mechanism is not yet decided.
   - Order of dtor execution within a data structure is somewhat
-    inconsistent (c.f. [#744]).
-- The legal aliasing rules between unsafe pointers is not fully settled (c.f. [#19733]).
+    inconsistent (see [#744]).
+- The legal aliasing rules between unsafe pointers is not fully settled (see [#19733]).
 - The interplay of assoc types and lifetimes is not fully settled and can lead
-  to unsoundness in some cases (c.f. [#23442]).
+  to unsoundness in some cases (see [#23442]).
 - The trait selection algorithm is expected to be improved and made more complete over time.
   It is possible that this will affect existing code.
 - Overflow semantics: in particular, we may have missed some cases.
 - Memory allocation in unsafe code is currently unstable. We expect to
   be defining safe interfaces as part of the work on supporting
-  tracing garbage collectors (c.f. [#415]).
-- The treatment of hygiene in macros is uneven (e.f., [#22462], [#24278]). In some cases,
+  tracing garbage collectors (see [#415]).
+- The treatment of hygiene in macros is uneven (see [#22462], [#24278]). In some cases,
   changes here may be backwards compatible, or may be more appropriate only with explicit opt-in
   (or perhaps an alternate macro system altogether).
 - The layout of data structures is explicit to change over time unless they are annotated
