@@ -180,7 +180,11 @@ parameters or projections are involved:
       --------------------------------------------------
       Env |- TraitId<P0..Pn>: 'a      
 
-The more interesting rules concern type parameters and projections. One way to draw conclusions is to find information in the environment. In terms of a Rust program, this means both explicit where-clauses and implied bounds derived from the signature (discussed below).
+The more interesting rules concern type parameters and
+projections. One way to draw conclusions is to find information in the
+environment. In terms of a Rust program, this means both explicit
+where-clauses and implied bounds derived from the signature (discussed
+below).
 
     TypeParameterEnv:
       X: 'a in Env
@@ -192,7 +196,9 @@ The more interesting rules concern type parameters and projections. One way to d
       --------------------------------------------------
       Env |- <P0 as Trait<P1..Pn>>::Id: 'a
 
-However, in the case of projections, there are two other possibilities. The first is that we may find information in the trait definition.
+However, in the case of projections, there are two other
+possibilities. The first is that we may find information in the trait
+definition.
 
     ProjectionTraitDef:
       WC = [Xi => Pi] WhereClauses(Trait) 
@@ -200,14 +206,19 @@ However, in the case of projections, there are two other possibilities. The firs
       --------------------------------------------------
       Env |- <P0 as Trait<P1..Pn>>::Id: 'a
 
-The second possibility is that it is also possible to conclude that if all the components in the trait reference outlive `'a`, then the projection must outlive `'a`:
+The second possibility is that it is also possible to conclude that if
+all the components in the trait reference outlive `'a`, then the
+projection must outlive `'a`:
 
     ProjectionComponents:
       Pi: 'a for i in 0..n
       --------------------------------------------------
       Env |- <P0 as Trait<P1..Pn>>::Id: 'a
 
-This rule is the key to the new approach. It allows us to conclude, for example, that `<i32 as Trait>::Id: 'static`, without even looking at the definition of `Trait`. The reasoning behind this rule is covered below.
+This rule is the key to the new approach. It allows us to conclude,
+for example, that `<i32 as Trait>::Id: 'static`, without even looking
+at the definition of `Trait`. The reasoning behind this rule is
+covered below.
 
 ### Reasoning behind the ProjectionComponents rule
 
