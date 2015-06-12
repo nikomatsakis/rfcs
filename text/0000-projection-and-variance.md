@@ -180,21 +180,48 @@ parameters or projections are involved:
       --------------------------------------------------
       TraitId<P0..Pn>: 'a      
 
-The more interesting rules 
+The more interesting rules concern type parameters and projections. One way to draw conclusions is to find information in the environment. In terms of a Rust program, this means both explicit where-clauses and implied bounds derived from the signature (discussed below).
 
-    Scalar:
+    TypeParameterEnv:
+      X: 'a in Env
       --------------------------------------------------
-      Env |- scalar: 'a
+      Env |- X: 'a
 
+    ProjectionEnv:
+      <P0 as Trait<P1..Pn>>::Id: 'a in Env
+      --------------------------------------------------
+      Env |- <P0 as Trait<P1..Pn>>::Id: 'a
+
+However, in the case of projections, there are two other possibilities. The first is that we may find information in the trait definition.
+
+    ProjectionTraitDef:
+      WC = [Xi => Pi] WhereClauses(Trait) 
+      <P0 as Trait<P1..Pn>>::Id: 'a in WC
+      --------------------------------------------------
+      Env |- <P0 as Trait<P1..Pn>>::Id: 'a
+
+The second possibility is that it is also possible to conclude that if all the components in the trait reference outlive `'a`, then the projection must outlive `'a`:
+
+    ProjectionComponents:
+      Pi: 'a for i in 0..n
+      --------------------------------------------------
+      Env |- <P0 as Trait<P1..Pn>>::Id: 'a
+
+This rule is the key to the new approach. It allows us to conclude, for example, that `<i32 as Trait>::Id: 'static`, without even looking at the definition of `Trait`. The reasoning behind this rule is covered below.
 
 In [RFC 192], the outlives relation was defined in terms
 
 - Simplify (and strengthen) the `T: 'a` relation to be purely syntactic
 - Specify various inference rules for the outlives relation applied to projections
   - `<P0 as Trait<P1..Pn>>::Item: 'a`
-- Enforce   
+- Enforce 
 
+Lemma:
 
+  Given: T0 = [X => T1] T2 where X in constrained(T2)
+  Then: (T0: 'a) => (T1: 'a)
+
+# Drawbacks
 
 # Drawbacks
 
