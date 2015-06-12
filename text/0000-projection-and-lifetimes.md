@@ -389,11 +389,6 @@ declare one), but we'll take those basic conditions for granted.
       --------------------------------------------------
       &'x T WF
 
-    WfTrait:
-      ∀i. Ri
-      --------------------------------------------------
-      R0..Rn+'x WF
-
     WfSlice:
       T WF
       T: Sized
