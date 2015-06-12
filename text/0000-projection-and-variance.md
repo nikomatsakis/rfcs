@@ -151,34 +151,34 @@ parameters or projections are involved:
     NominalType:
       P[i]: 'a for i in 0..n
       --------------------------------------------------
-      Id<P0..Pn>: 'a
+      Env |- Id<P0..Pn>: 'a
 
     Reference:
       'x: 'a
       T: 'a
       --------------------------------------------------
-      &'x T: 'a
+      Env |- &'x T: 'a
 
     Object:
       R[i]: 'a for i in 0..n
       'x: 'a
       --------------------------------------------------
-      R0..Rn+'x: 'a
+      Env |- R0..Rn+'x: 'a
 
     Function:
       Ti: 'a for i in 0..n
       --------------------------------------------------
-      fn(T1..Tn) -> T0
+      Env |- fn(T1..Tn) -> T0
 
     TraitRef:
       Ti: 'a for i in 0..n
       --------------------------------------------------
-      TraitId<P0..Pn>: 'a      
+      Env |- TraitId<P0..Pn>: 'a      
 
     TraitRef:
       Ti: 'a for i in 0..n
       --------------------------------------------------
-      TraitId<P0..Pn>: 'a      
+      Env |- TraitId<P0..Pn>: 'a      
 
 The more interesting rules concern type parameters and projections. One way to draw conclusions is to find information in the environment. In terms of a Rust program, this means both explicit where-clauses and implied bounds derived from the signature (discussed below).
 
@@ -208,6 +208,16 @@ The second possibility is that it is also possible to conclude that if all the c
       Env |- <P0 as Trait<P1..Pn>>::Id: 'a
 
 This rule is the key to the new approach. It allows us to conclude, for example, that `<i32 as Trait>::Id: 'static`, without even looking at the definition of `Trait`. The reasoning behind this rule is covered below.
+
+### Reasoning behind the ProjectionComponents rule
+
+The `ProjectionComponents` rule concludes that `<P0 as Trait<P1..Pn>>::Id: 'a` by considering all of its components `Pi`. To see why this makes sense, consider the impl that defines the type `Id`:
+
+```rust
+impl<A..Z> Trait<Q1..Qn> for Q0 {
+    type Id = ...;
+}
+```
 
 In [RFC 192], the outlives relation was defined in terms
 
