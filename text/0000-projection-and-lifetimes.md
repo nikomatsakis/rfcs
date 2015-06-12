@@ -400,6 +400,8 @@ declare one), but we'll take those basic conditions for granted.
       --------------------------------------------------
       <P0 as Trait<P1..Pn>>::Id WF
 
+#### Deferred WF checking
+
 The following two rules are interesting. For fn arguments and trait
 objects, there may be higher-ranked lifetimes involved. This means
 that we cannot (in general) check that the types involved are
@@ -414,23 +416,33 @@ well-formed. Therefore, we stop at these boundaries.
       R0..Rn+ℓ WF
 
 The WF of types in a fn signature or trait object is deferred to the
-point where the fn is calle or the trait object is used.
+point in type-checking where the fn is called or the trait object is
+used, as we are guaranteed that all higher-ranked lifetimes are fully
+instantiated at that point.
 
-It is also reasonable to consider when a where-clause is WF. This
-will be needed below:
+We employ a similar deferral strategy with where-clauses: because
+where-clauses may contain higher-ranked bounds, we do not check that
+the types appearing in those where-clauses are well-formed at the
+declaration, but rather later, during trait checking, when we know
+that all higher-ranked lifetimes are instantiated.
 
-    WfTraitRef:
-      
-      --------------------------------------------------
-      for<ℓ..> P0: Trait<P1..Pn>
+#### Implied bounds
 
-OPTIONS:
+In some cases, we use the WF relation to create *implied bounds*.
+This is intended to reduce the annotation overhead for end-users. The
+implied bounds for a given type `T` are the region relationships that
+would be required to make `T` well-formed. The result is a set of
+outlives clauses of the form:
 
-- Do not check WF of where-clauses, but defer the check until we are
-  *using* a where-clause.
-- Is there some kind of weird annoying cycle? Wherein we use the where
-  clause, check that it's WF, and find that it is due to itself or
-  something?
+- `'a:'r`
+- `T:'r`
+- `<T as Trait<..>>::Id: 'r`
+
+Note that when computing the implied bounds, if we find a projection
+like `<T as Trait<..>>::Id: 'r`, we add an implied bound for the
+projection as a whole, but not for its components (i.e., not `T: 'r`,
+in this example). This is because there are many ways to prove that a
+projection outlives `'r`, and recursing to its components is but one.
 
 #### When should we check the WF relation and under what conditions?
 
@@ -441,12 +453,50 @@ to. Partly that is due to the fact that the compiler currently
 connects the WF and outlives relationship into one thing, rather than
 separating them as proposed here.
 
-**Struct/enum declarations.** In a struct/enum declaration, we should
-create an initial environment consisting of the where clauses declared
-on the struct/enum. No implied bounds are considered. We then check
-that (1) the where-clauses are WF and (2) that all field types are WF.
+**Constants/statics.** The type of a constant or static can be checked
+for WF in an empty environment.
 
-**Trait declarations.** 
+**Struct/enum declarations.** In a struct/enum declaration, we should
+check that all field types are WF given the where-clauses from the struct.
+
+**Function items.** For function items, the environment consists of
+all the where-clauses from the fn, as well as implied bounds derived
+from the fn's argument types. These are then used to check the WF of
+all fn argument types, the fn return type, and any types that appear
+in the fns body.
+
+**Trait impls.** In a trait impl, we assume that all types appearing
+in the impl header are well-formed. This means that the initial
+environment for an impl consists of the impl where-clauses and implied
+bounds derived from its header. Example: Given an impl like
+`impl<'a,T> SomeTrait for &'a T`, the environment would be `T: Sized`
+(explicit where-clause) and `T: 'a` (implied bound derived from `&'a
+T`). This environment is used as the starting point for checking the
+associated types, constants, and fns.
+
+**Inherent impls.** In an inherent impl, we simply check the methods
+as if they were normal functions.
+
+**Trait declarations.** Trait declarations (and defaults) are checked
+in the same fashion as impls, except that there are no implied bounds
+from the impl header.
+
+**Type aliases.** Type aliases are currently not checked for WF, which
+is harmless since they are transparent to type-checking, effectively.
+If we chose, we could check for WF, but it would mean more
+annotations, for example: `type Ref<'a,T> = &'a T` would require a `T:
+'a` annotation.
+
+Several points in the list above made use of *implied bounds* based on
+assuming that various types were WF. We have to ensure that those
+bounds are checked on the reciprocal side, as follows:
+
+**Fns being called.**
+
+**Applying an impl.**
+
+#### Deferred WF checking
+
 
 # Drawbacks
 
