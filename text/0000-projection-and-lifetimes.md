@@ -155,8 +155,12 @@ call that set `Λ=<ℓ0..ℓn>`. We'll start out with a simple
       
 This says that `T: 'a` is true if we can judge that `T: 'a` when no
 lifetimes are bound. OK, with that preliminary out of the way, let's
-look at The first set of rules. These rules cover the simple cases,
-where no type parameters or projections are involved:
+look at The first set of rules.
+
+#### Simple cases of the outlives
+
+These rules cover the simple cases, where no type parameters or
+projections are involved:
 
     OutlivesScalar:
       --------------------------------------------------
@@ -188,55 +192,84 @@ where no type parameters or projections are involved:
       ∀i. Λ,ℓ.. ⊢ Pi: 'a
       --------------------------------------------------
       Λ ⊢ for<ℓ..> TraitId<P0..Pn>: 'a      
+      
+#### Outlives for lifetimes
 
-The more interesting rules concern type parameters and
-projections. One way to draw conclusions is to find information in the
-environment (which is being threaded implicitly here, since it is
-never modified). In terms of a Rust program, this means both explicit
-where-clauses and implied bounds derived from the signature (discussed
-below).
+The outlives relation for lifetimes depends on whether the lifetime in
+question was bound within a type or not. In the usual case, we decide
+the relationship between two lifetimes by consulting the environment.
+Lifetimes representing scopes within the current fn have a
+relationship derived from the code itself, lifetime parameters have
+relationships defined by where-clauses and implied bounds:
+
+      'x not in Λ
+      ('x: 'a) in Env
+      --------------------------------------------------
+      Λ ⊢ 'x: 'a
+      
+For higher-ranked lifetimes, we simply ignore the relation, since the
+lifetime is not yet known. This means for example that `fn<'a> fn(&'a
+i32): 'x` holds, even though we do not yet know what region `'a` is
+(and in fact it may be instantiated many times with different values
+on each call to the fn).
+      
+      'x in Λ
+      --------------------------------------------------
+      Λ ⊢ 'x: 'a
+
+#### Outlives for type parameters
+
+For type parameters, the only way to draw "outlives" conclusions is to
+find information in the environment (which is being threaded
+implicitly here, since it is never modified). In terms of a Rust
+program, this means both explicit where-clauses and implied bounds
+derived from the signature (discussed below).
 
     OutlivesTypeParameterEnv:
       X: 'a in Env
       --------------------------------------------------
       Λ ⊢ X: 'a
 
+
+#### Outlives for projections
+
+Projections have the most possibilities. First, we may find
+information in the environment, as with type parameters, but we can
+also consult the trait definition to find bounds (consider an
+associated type declared like `type Foo: 'static`). These rule only
+apply if there are no higher-ranked lifetimes in the projection; for
+simplicity's sake, we encode that by requiring an empty list of
+higher-ranked lifetimes. (This is somewhat stricter than necessary,
+but reflects the behavior of my prototype implementation.)
+
     OutlivesProjectionEnv:
       <P0 as Trait<P1..Pn>>::Id: 'a in Env
       --------------------------------------------------
-      Λ ⊢ <P0 as Trait<P1..Pn>>::Id: 'a
-
-However, in the case of projections, there are two other
-possibilities. The first is that we may find information in the trait
-definition.
+      <> ⊢ <P0 as Trait<P1..Pn>>::Id: 'a
 
     OutlivesProjectionTraitDef:
       WC = [Xi => Pi] WhereClauses(Trait) 
       <P0 as Trait<P1..Pn>>::Id: 'a in WC
       --------------------------------------------------
-      Λ ⊢ <P0 as Trait<P1..Pn>>::Id: 'a
+      <> ⊢ <P0 as Trait<P1..Pn>>::Id: 'a
 
-The second possibility is that it is also possible to conclude that if
-all the components in the trait reference outlive `'a`, then the
-projection must outlive `'a`:
+All the rules covered so far already exist today. This last rule,
+however, is not only new, it is the crucial insight of this RFC.  It
+states that if all the components in a projection's trait reference
+outlive `'a`, then the projection must outlive `'a`:
 
     OutlivesProjectionComponents:
-      ∀i. Pi: 'a
+      ∀i. Λ ⊢ Pi: 'a
       --------------------------------------------------
       Λ ⊢ <P0 as Trait<P1..Pn>>::Id: 'a
 
-This `OutlivesProjectionComponents` rule is the crucial part of this RFC. It
-is also the major change from the existing rules we have in the compiler
-today. It is covered in detail in the next section.
+Given the importance of this rule, it's worth spending a bit of time
+discussing it in more detail. The following explanation is fairly
+informal. A more detailed look can be found in the appendix.
 
-### Reasoning behind the `OutlivesProjectionComponents` rule
-
-##### An informal explanation
-
-To explain the `OutlivesProjectionComponents` rule, let me start with
-some examples to give you an intuitive feeling for what it says. Let's
-work with the example of an iterator type like `std::vec::Iter<'a,T>`.
-We are interested in the projection of `Iterator::Item`:
+Let's begin with a concrete example of an iterator type, like
+`std::vec::Iter<'a,T>`. We are interested in the projection of
+`Iterator::Item`:
 
     <Iter<'a,T> as Iterator>::Item
 
@@ -247,31 +280,40 @@ or, in the more succint (but potentially ambiguous) form:
 Since I'm going to be talking a lot about this type, let's just call
 it `<PROJ>` for now. We would like to determine whether `<PROJ>: 'x` holds.
 
-Now, the easy way to solve `<PROJ>: 'x` would be to normalize `<PROJ>` by
-looking at the impl `Iterator`. From that we could conclude that `<PROJ> ==
-&'a T`, and thus reduce `<PROJ>: 'x` to `&'a T: 'x`, which in turn holds if
-`'a: 'x` and `T: 'x` (from the rule `OutlivesReference`).
+Now, the easy way to solve `<PROJ>: 'x` would be to normalize `<PROJ>`
+by looking at the relevant impl:
+
+```rust
+impl<'b,U> Iterator for Iter<'b,U> {
+    type Item = &'b U;
+    ...
+}
+```
+
+From this impl, we can conclude that `<PROJ> == &'a T`, and thus
+reduce `<PROJ>: 'x` to `&'a T: 'x`, which in turn holds if `'a: 'x`
+and `T: 'x` (from the rule `OutlivesReference`).
 
 But often we are in a situation where we can't normalize the
-projection.  What can we do then? The rule
+projection. What can we do then? The rule
 `OutlivesProjectionComponents` says that if we can conclude that every
 lifetime/type parameter `Pi` to the trait reference outlives `'x`,
 then we know that a projection from those parameters outlives `'x`. In
 our example, the trait reference is `<Iter<'a,T> as Iterator>`, so
 that means that if the type `Iter<'a,T>` outlives `'x`, then the
-projection `<PROJ>` outlives `'x`. Now, you can see that this trivially
-reduces to the same result as the normalization, since `Iter<'a,T>:
-'x` holds if `'a: 'x` and `T: 'x` (from the rule
+projection `<PROJ>` outlives `'x`. Now, you can see that this
+trivially reduces to the same result as the normalization, since
+`Iter<'a,T>: 'x` holds if `'a: 'x` and `T: 'x` (from the rule
 `OutlivesNominalType`).
 
 OK, so we've seen that applying the rule
 `OutlivesProjectionComponents` comes up with the same result as
 normalizing (at least in this case), and that's a good sign. But what
-is the basis of the rule, and is it always *equivalent* to
-normalizing?
+is the basis of the rule?
 
-The basis of the rule comes from reasoning about how the associated
-type is defined. Basically, there must be some impl like:
+The basis of the rule comes from reasoning about the impl that we used
+to do normalization. Let's consider that impl again, but this time
+hide the actual type that was specified:
 
 ```rust
 impl<'b,U> Iterator for Iter<'b,U> {
@@ -281,24 +323,21 @@ impl<'b,U> Iterator for Iter<'b,U> {
 ```
 
 So when we normalize `<PROJ>`, we obtain the result by applying some
-substitution `Θ` to `<TYPE>`. This substitution is a mapping
-from the lifetime/type parameters on the impl to some specific values,
-such that `<PROJ> == Θ <Iter<'b,U> as Iterator>::Item`. In this
-case, that means `Θ` would be `['b => 'a, U => T]` (and of
-course `<TYPE>` would be `&'b U`, but we're not supposed to rely on
-that).
+substitution `Θ` to `<TYPE>`. This substitution is a mapping from the
+lifetime/type parameters on the impl to some specific values, such
+that `<PROJ> == Θ <Iter<'b,U> as Iterator>::Item`. In this case, that
+means `Θ` would be `['b => 'a, U => T]` (and of course `<TYPE>` would
+be `&'b U`, but we're not supposed to rely on that).
 
 The key idea for the `OutlivesProjectionComponents` is that the only
-way that `<TYPE>` can *fail* to outlive `'x` is if it either:
+way that `<TYPE>` can *fail* to outlive `'x` is if either:
 
-- names some lifetime parameter `'p` where `'p: 'x` does not hold;
-- or it names some type parameter `X` where `X: 'x` does not hold.
+- it names some lifetime parameter `'p` where `'p: 'x` does not hold; or,
+- it names some type parameter `X` where `X: 'x` does not hold.
 
-(More succintly, if it names some parameter `P`, where `P` can by a
-type or lifetime parameter, and `P: 'x` does not hold.) Now, the only
-way that `<TYPE>` can refer to a parameter `P` is if it is brought in
-by the substitution `Θ`. So, if we can just show that all the
-types/lifetimes that in the range of `Θ` outlive `'x`, then we
+Now, the only way that `<TYPE>` can refer to a parameter `P` is if it
+is brought in by the substitution `Θ`. So, if we can just show that
+all the types/lifetimes that in the range of `Θ` outlive `'x`, then we
 know that `Θ <TYPE>` outlives `'x`.
 
 Put yet another way: imagine that you have an impl with *no
@@ -317,7 +356,127 @@ need to see that the trait reference `<Foo as Iterator>` doesn't have
 any lifetimes or type parameters in it, and hence the impl cannot
 refer to any lifetime or type parameters.
 
-##### A more detailed explanation
+### The WF relation
+
+This section describes the "well-formed" relation. In
+[previous RFCs][RFC 192], this was combined with the outlives
+relation. We separate it here for reasons that shall become clear when
+we discuss WF conditions on impls.
+
+The WF relation is really pretty simple: it just says that a type is
+"self-consistent". Typically, this would include validating scoping
+(i.e., that you don't refer to a type parameter `X` if you didn't
+declare one), but we'll take those basic conditions for granted.
+
+    WfScalar:
+      --------------------------------------------------
+      scalar WF
+
+    WfParameter:
+      --------------------------------------------------
+      X WF
+
+    WfNominalType:
+      ∀i. Pi Wf            // parameters must be WF,
+      C = WhereClauses(Id) // and the conditions declared on Id must hold...
+      [P0..Pn] C           // ...after substituting parameters, of course
+      --------------------------------------------------
+      Id<P0..Pn> WF
+
+    WfReference:
+      T WF                 // T must be WF
+      T: 'x                // T must outlive 'x
+      --------------------------------------------------
+      &'x T WF
+
+    WfTrait:
+      ∀i. Ri
+      --------------------------------------------------
+      R0..Rn+'x WF
+
+    WfSlice:
+      T WF
+      T: Sized
+      --------------------------------------------------
+      [T] WF
+
+    WfProjection:
+      ∀i. Pi WF
+      --------------------------------------------------
+      <P0 as Trait<P1..Pn>>::Id WF
+
+The following two rules are interesting. For fn arguments and trait
+objects, there may be higher-ranked lifetimes involved. This means
+that we cannot (in general) check that the types involved are
+well-formed. Therefore, we stop at these boundaries.
+
+    WfFn:
+      --------------------------------------------------
+      for<ℓ..> fn(T1..Tn) -> T0
+
+    WfObject:
+      --------------------------------------------------
+      R0..Rn+ℓ WF
+
+The WF of types in a fn signature or trait object is deferred to the
+point where the fn is calle or the trait object is used.
+
+It is also reasonable to consider when a where-clause is WF. This
+will be needed below:
+
+    WfTraitRef:
+      
+      --------------------------------------------------
+      for<ℓ..> P0: Trait<P1..Pn>
+
+OPTIONS:
+
+- Do not check WF of where-clauses, but defer the check until we are
+  *using* a where-clause.
+- Is there some kind of weird annoying cycle? Wherein we use the where
+  clause, check that it's WF, and find that it is due to itself or
+  something?
+
+#### When should we check the WF relation and under what conditions?
+
+Currently the compiler performs WF checking in a somewhat haphazard
+way: in some cases (such as impls), it omits checking WF, but in
+others (such as fn bodies), it checks WF when it should not have
+to. Partly that is due to the fact that the compiler currently
+connects the WF and outlives relationship into one thing, rather than
+separating them as proposed here.
+
+**Struct/enum declarations.** In a struct/enum declaration, we should
+create an initial environment consisting of the where clauses declared
+on the struct/enum. No implied bounds are considered. We then check
+that (1) the where-clauses are WF and (2) that all field types are WF.
+
+**Trait declarations.** 
+
+# Drawbacks
+
+N/A
+
+# Alternatives
+
+N/A
+
+# Unresolved questions
+
+None.
+
+[RFC 192]: https://github.com/rust-lang/rfcs/blob/master/text/0192-bounds-on-object-and-generic-types.md
+[RFC 195]: https://github.com/rust-lang/rfcs/blob/master/text/0195-associated-items.md
+[RFC 447]: https://github.com/rust-lang/rfcs/blob/master/text/0447-no-unused-impl-parameters.md
+[#23442]: https://github.com/rust-lang/rust/issues/23442
+[#24662]: https://github.com/rust-lang/rust/issues/24622
+[#22436]: https://github.com/rust-lang/rust/pull/22436
+[#22246]: https://github.com/rust-lang/rust/issues/22246
+[adapted]: https://github.com/rust-lang/rust/issues/22246#issuecomment-74186523
+[#22077]: https://github.com/rust-lang/rust/issues/22077
+[#24461]: https://github.com/rust-lang/rust/pull/24461
+
+# Appendix
 
 The informal explanation glossed over some details. Let's go from
 specific examples to a more general one, where the projection `<PROJ>`
@@ -433,84 +592,3 @@ Lemma:
   Given: T0 = [X => T1] T2 where X in constrained(T2)
   Then: (T0: 'a) => (T1: 'a)
 
-### The WF relation
-
-This section describes the "well-formed" relation. In
-[previous RFCs][RFC 192], this was combined with the outlives
-relation. We separate it here for reasons that shall become clear when
-we discuss WF conditions on impls.
-
-The WF relation is really pretty simple: it just says that a type is
-"self-consistent". Typically, this would include validating scoping
-(i.e., that you don't refer to a type parameter `X` if you didn't
-declare one), but we'll take those basic conditions for granted.
-
-    WfScalar:
-      --------------------------------------------------
-      scalar WF
-
-    WfParameter:
-      --------------------------------------------------
-      X WF
-
-    WfNominalType:
-      ∀i. Pi Wf            // parameters must be WF,
-      C = WhereClauses(Id) // and the conditions declared on Id must hold...
-      [P0..Pn] C           // ...after substituting parameters, of course
-      --------------------------------------------------
-      Id<P0..Pn> WF
-
-    WfReference:
-      T WF                 // T must be WF
-      T: 'x                // T must outlive 'x
-      --------------------------------------------------
-      &'x T WF
-
-    WfTrait:
-      ∀i. Ri
-      --------------------------------------------------
-      R0..Rn+'x WF
-
-    WfSlice:
-      T WF
-      T: Sized
-      --------------------------------------------------
-      [T] WF
-
-    WfSlice:
-      T WF
-      T: Sized
-      --------------------------------------------------
-      [T] WF
-
-
-      | [T]                           // Slice type
-      | fn(T1..Tn) -> T0              // Function pointer
-      | <P0 as Trait<P1..Pn>>::Id     // Projection
-
-
-
-# Drawbacks
-
-# Drawbacks
-
-Why should we *not* do this?
-
-# Alternatives
-
-What other designs have been considered? What is the impact of not doing this?
-
-# Unresolved questions
-
-What parts of the design are still TBD?
-
-[RFC 192]: https://github.com/rust-lang/rfcs/blob/master/text/0192-bounds-on-object-and-generic-types.md
-[RFC 195]: https://github.com/rust-lang/rfcs/blob/master/text/0195-associated-items.md
-[RFC 447]: https://github.com/rust-lang/rfcs/blob/master/text/0447-no-unused-impl-parameters.md
-[#23442]: https://github.com/rust-lang/rust/issues/23442
-[#24662]: https://github.com/rust-lang/rust/issues/24622
-[#22436]: https://github.com/rust-lang/rust/pull/22436
-[#22246]: https://github.com/rust-lang/rust/issues/22246
-[adapted]: https://github.com/rust-lang/rust/issues/22246#issuecomment-74186523
-[#22077]: https://github.com/rust-lang/rust/issues/22077
-[#24461]: https://github.com/rust-lang/rust/pull/24461
