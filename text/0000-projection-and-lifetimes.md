@@ -491,12 +491,20 @@ Several points in the list above made use of *implied bounds* based on
 assuming that various types were WF. We have to ensure that those
 bounds are checked on the reciprocal side, as follows:
 
-**Fns being called.**
+**Fns being called.** Before calling a fn, we check that its argument
+and return types are WF. This check takes place after all
+higher-ranked lifetimes have been instantiated. Checking the argument
+types ensures that the implied bounds due to argument types are
+correct. Checking the return type ensures that the resulting type of
+the call is WF.
 
-**Applying an impl.**
-
-#### Deferred WF checking
-
+**Projections of types, fns, and consts.** When we project an item out
+of a trait, we must also validate that the types in the trait
+reference are well-formed. Examples of projections are calling a trait
+function (or obtaining it through UFCS), normalizing a projected like,
+or using an associated constant. Checking the types in the trait
+reference implies that the implied bounds from the impl are correct at
+the time when members of the impl are accessed.
 
 # Drawbacks
 
