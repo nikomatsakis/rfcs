@@ -5,8 +5,15 @@
 
 # Summary
 
-Simplify and clarify the rules on well-formedness with the aim of
-correcting various soundness errors.
+Type system changes to address the outlives relation with respect to
+projections. The current implementation can be both unsound ([#24662])
+and inconvenient ([#23442]).
+
+- Simplify the outlives relation to be syntactically based
+- Specify improved rules for the outlives relation and projections
+
+The proposes changes here are backwards incompatible. The impact has
+been evaluated and found to be quite minimal.
 
 # Motivation
 
@@ -136,8 +143,6 @@ types:
       | T                             // Type
     R = for<ℓ0..ℓn> TraitId<P0..Pn>   // Trait reference  
     ℓ = 'x                            // Named lifetime
-    
-
     
 ### Syntactic definition of the outlives relation
 
@@ -356,163 +361,13 @@ need to see that the trait reference `<Foo as Iterator>` doesn't have
 any lifetimes or type parameters in it, and hence the impl cannot
 refer to any lifetime or type parameters.
 
-### The WF relation
-
-This section describes the "well-formed" relation. In
-[previous RFCs][RFC 192], this was combined with the outlives
-relation. We separate it here for reasons that shall become clear when
-we discuss WF conditions on impls.
-
-The WF relation is really pretty simple: it just says that a type is
-"self-consistent". Typically, this would include validating scoping
-(i.e., that you don't refer to a type parameter `X` if you didn't
-declare one), but we'll take those basic conditions for granted.
-
-    WfScalar:
-      --------------------------------------------------
-      scalar WF
-
-    WfParameter:
-      --------------------------------------------------
-      X WF
-
-    WfNominalType:
-      ∀i. Pi Wf            // parameters must be WF,
-      C = WhereClauses(Id) // and the conditions declared on Id must hold...
-      [P0..Pn] C           // ...after substituting parameters, of course
-      --------------------------------------------------
-      Id<P0..Pn> WF
-
-    WfReference:
-      T WF                 // T must be WF
-      T: 'x                // T must outlive 'x
-      --------------------------------------------------
-      &'x T WF
-
-    WfSlice:
-      T WF
-      T: Sized
-      --------------------------------------------------
-      [T] WF
-
-    WfProjection:
-      ∀i. Pi WF
-      --------------------------------------------------
-      <P0 as Trait<P1..Pn>>::Id WF
-
-#### Deferred WF checking
-
-The following two rules are interesting. For fn arguments and trait
-objects, there may be higher-ranked lifetimes involved. This means
-that we cannot (in general) check that the types involved are
-well-formed. Therefore, we stop at these boundaries.
-
-    WfFn:
-      --------------------------------------------------
-      for<ℓ..> fn(T1..Tn) -> T0
-
-    WfObject:
-      --------------------------------------------------
-      R0..Rn+ℓ WF
-
-The WF of types in a fn signature or trait object is deferred to the
-point in type-checking where the fn is called or the trait object is
-used, as we are guaranteed that all higher-ranked lifetimes are fully
-instantiated at that point.
-
-We employ a similar deferral strategy with where-clauses: because
-where-clauses may contain higher-ranked bounds, we do not check that
-the types appearing in those where-clauses are well-formed at the
-declaration, but rather later, during trait checking, when we know
-that all higher-ranked lifetimes are instantiated.
-
-#### Implied bounds
-
-In some cases, we use the WF relation to create *implied bounds*.
-This is intended to reduce the annotation overhead for end-users. The
-implied bounds for a given type `T` are the region relationships that
-would be required to make `T` well-formed. The result is a set of
-outlives clauses of the form:
-
-- `'a:'r`
-- `T:'r`
-- `<T as Trait<..>>::Id: 'r`
-
-Note that when computing the implied bounds, if we find a projection
-like `<T as Trait<..>>::Id: 'r`, we add an implied bound for the
-projection as a whole, but not for its components (i.e., not `T: 'r`,
-in this example). This is because there are many ways to prove that a
-projection outlives `'r`, and recursing to its components is but one.
-
-#### When should we check the WF relation and under what conditions?
-
-Currently the compiler performs WF checking in a somewhat haphazard
-way: in some cases (such as impls), it omits checking WF, but in
-others (such as fn bodies), it checks WF when it should not have
-to. Partly that is due to the fact that the compiler currently
-connects the WF and outlives relationship into one thing, rather than
-separating them as proposed here.
-
-**Constants/statics.** The type of a constant or static can be checked
-for WF in an empty environment.
-
-**Struct/enum declarations.** In a struct/enum declaration, we should
-check that all field types are WF given the where-clauses from the struct.
-
-**Function items.** For function items, the environment consists of
-all the where-clauses from the fn, as well as implied bounds derived
-from the fn's argument types. These are then used to check the WF of
-all fn argument types, the fn return type, and any types that appear
-in the fns body.
-
-**Trait impls.** In a trait impl, we assume that all types appearing
-in the impl header are well-formed. This means that the initial
-environment for an impl consists of the impl where-clauses and implied
-bounds derived from its header. Example: Given an impl like
-`impl<'a,T> SomeTrait for &'a T`, the environment would be `T: Sized`
-(explicit where-clause) and `T: 'a` (implied bound derived from `&'a
-T`). This environment is used as the starting point for checking the
-associated types, constants, and fns.
-
-**Inherent impls.** In an inherent impl, we simply check the methods
-as if they were normal functions.
-
-**Trait declarations.** Trait declarations (and defaults) are checked
-in the same fashion as impls, except that there are no implied bounds
-from the impl header.
-
-**Type aliases.** Type aliases are currently not checked for WF, which
-is harmless since they are transparent to type-checking, effectively.
-If we chose, we could check for WF, but it would mean more
-annotations, for example: `type Ref<'a,T> = &'a T` would require a `T:
-'a` annotation.
-
-Several points in the list above made use of *implied bounds* based on
-assuming that various types were WF. We have to ensure that those
-bounds are checked on the reciprocal side, as follows:
-
-**Fns being called.** Before calling a fn, we check that its argument
-and return types are WF. This check takes place after all
-higher-ranked lifetimes have been instantiated. Checking the argument
-types ensures that the implied bounds due to argument types are
-correct. Checking the return type ensures that the resulting type of
-the call is WF.
-
-**Projections of types, fns, and consts.** When we project an item out
-of a trait, we must also validate that the types in the trait
-reference are well-formed. Examples of projections are calling a trait
-function (or obtaining it through UFCS), normalizing a projected like,
-or using an associated constant. Checking the types in the trait
-reference implies that the implied bounds from the impl are correct at
-the time when members of the impl are accessed.
-
 # Drawbacks
 
 N/A
 
 # Alternatives
 
-N/A
+I'm not aware of any appealing alternatives.
 
 # Unresolved questions
 
@@ -531,13 +386,16 @@ None.
 
 # Appendix
 
-The informal explanation glossed over some details. Let's go from
-specific examples to a more general one, where the projection `<PROJ>`
-is (here, `P` can be a lifetime or type parameter as appropriate):
+The informal explanation glossed over some details. This appendix
+tries to be a bit more thorough with how it is that we can conclude
+that a projection outlives `'a` if its inputs outlive `'a`. To start,
+let's specify the projection `<PROJ>` as:
 
     <P0 as Trait<P1...Pn>>::Id
     
-The relevant impl is:
+where `P` can be a lifetime or type parameter as appropriate.
+    
+Then we know that there exists some impl of the form:
 
 ```rust
 impl<X0..Xn> Trait<Q1..Qn> for Q0 {
@@ -548,11 +406,10 @@ impl<X0..Xn> Trait<Q1..Qn> for Q0 {
 Here again, `X` can be a lifetime or type parameter name, and `Q` can
 be any lifetime or type parameter.
 
-Let `Θ` be some substitution `[Xi => Ri]` such that `∀i. Θ Qi ==
-Pi`. Then the normalized form of `<PROJ>` is `Θ T`. This substitution
-must exist because otherwise this impl is not suitable for the
-projection `<PROJ>`. Note that because trait matching is invariant,
-the types must be exactly equal.
+Let `Θ` be a suitable substitution `[Xi => Ri]` such that `∀i. Θ Qi ==
+Pi` (in other words, so that the impl applies to the projection). Then
+the normalized form of `<PROJ>` is `Θ T`. Note that because trait
+matching is invariant, the types must be exactly equal.
 
 [RFC 447] and [#24461] require that a parameter `Xi` can only appear
 in `T` if it is *constrained* by the trait reference `<Q0 as
@@ -568,80 +425,49 @@ Recall the rule `OutlivesProjectionComponents`:
       --------------------------------------------------
       <P0 as Trait<P1..Pn>>::Id: 'a
 
-We aim to show that `∀i. Pi: 'a` implies `(Θ T): 'a`, which
-implies that this rule is a sound approximation for normalization.
-The high-level outline of the argument is as follows:
+We aim to show that `∀i. Pi: 'a` implies `(Θ T): 'a`, which implies
+that this rule is a sound approximation for normalization.  The
+argument follows from two lemmas ("proofs" for these lemmas are
+sketched below):
 
-1. First, we show that 
+1. First, we show that if `Pi: 'a`, then every "subcomponent" of `Pi:
+   'a`.  The idea here is that each variable `Xi` from the impl will
+   match against and extract some subcomponent of `Pi`, and we wish to
+   show that this subcomponent outlives `'a`.
+2. Then we will show that the type `θ T` outlives `'a` if, for each of
+   the in-scope parameters `Xi`, `Θ Xi: 'a`.
 
-Our first lemma says that if you have a type `T: 'a`
+**Definition 1.** `Constrained(T)` defines the set of type/lifetime
+parameters that are *constrained* by a type. This set is found just by
+recursing over and extracting all subcomponents *except* for those
+found in a projection. This is because a type like `X::Foo` does not
+constrain what type `X` can take on, rather it uses `X` as an input to
+compute a result:
 
-1. We want to show something like this:
-   - We know that the types in the projection outlive `'a`
-   - From this we conclude that each *part* of those types outlive `'a` individually
-   - From this we conclude that the parts `Ri` each outlive `'a`
-   - Then we show that if you have a type and you substitute in parts that outlive `'a`,
-     it outlives `'a`
-     
-     
+    Constrained(scalar) = {}
+    Constrained(X) = {X}
+    Constrained(&'x T) = {'x} | Constrained(T)
+    Constrained(R0..Rn+'x) = Union(Constrained(Ri)) | {'x}
+    Constrained([T]) = Constrained(T),
+    Constrained(for<..> fn(T1..Tn) -> T0) = Union(Constrained(Ti))
+    Constrained(<P0 as Trait<P1..Pn>>::Id) = {} // empty set
 
+**Definition 2.** `Constrained('a) = {'a}`. In other words, a lifetime
+reference just constraints itself.
 
-Our first lemma relates the range of the substitution `Θ` 
+**Lemma 1:** Given `P: 'a`, `P = [X => R] Q`, and `X ∈ Constrained(Q)`,
+then `R: 'a`. Proceed by induction and by cases over the form of `P`:
 
-    Given:
-      ∀i. P: 'a
-      [Xi => Ri] Q == P
-    Then:
-      
-      
-  Given: T0 = [X => T1] T2 where X in constrained(T2)
-  Then: (T0: 'a) => (T1: 'a)
+1. If `P` is a scalar or parameter, there are no subcomponents, so `R=P`.
+2. For nominal types, references, objects, and function types, either
+   `R=P` or `R` is some subcomponent of P. The appropriate "outlives"
+   rules all require that all subcomponents outlive `'a`, and hence
+   the conclusion follows by induction.
+3. If `P` is a projection, that implies that `R=P`.
+   - Otherwise, `Q` must be a projection, and in that case, `Constrained(Q)` would be
+     the empty set.
 
-
-
-
-If you look at the "outlives" rules, you can see that the only way for
-`<TYPE>: 'x` to fail is if `<TYPE>` contains either a lifetime (other
-than `'static`) or a type parameter. Based on the reasoning above, we
-know that the only lifetime/type parameters in `<TYPE>` were
-constrained by the trait reference. Put another way, the normalized
-projection `<PROJ>` is defined by some substitution like:
-
-    
-
-
-
-
-
-
-The rule `ProjectionComponents` says that that if we know 
-
-The key
-idea is that if we have a projection like `<SomeType as
-Iterator>::Item` (or, more succintly, `SomeType::Item`), knowing that
-`SomeType: 'a` also tells us that `SomeType::Item: 'a`. Put another way,
-if the iterator outlives 
-
-
-concludes that `<P0 as Trait<P1..Pn>>::Id: 'a` by considering all of
-its components `Pi`. To see why this makes sense, consider the impl
-that defines the type `Id`:
-
-```rust
-impl<A..Z> Trait<Q1..Qn> for Q0 {
-    type Id = ...;
-}
-<```
-
-In [RFC 192], the outlives relation was defined in terms
-
-- Simplify (and strengthen) the `T: 'a` relation to be purely syntactic
-- Specify various inference rules for the outlives relation applied to projections
-  - `<P0 as Trait<P1..Pn>>::Item: 'a`
-- Enforce 
-
-Lemma:
-
-  Given: T0 = [X => T1] T2 where X in constrained(T2)
-  Then: (T0: 'a) => (T1: 'a)
-
+**Lemma 2:** Given that `FV(T) ∈ X`, `∀i. Ri: 'a`, then `[X => R] T:
+'a`. In other words, if all the type/lifetime parameters that appear
+in a type outlive `'a`, then the type outlives `'a`. Follows by
+inspection of the outlives rules.
