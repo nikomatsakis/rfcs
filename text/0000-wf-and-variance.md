@@ -327,7 +327,11 @@ the time when members of the impl are accessed.
 
 # Drawbacks
 
-N/A
+Losing contravariance obviously results in a somewhat less expressive
+language, though given the limited role of subtyping in Rust, and the
+fact that all trait objects are invariant today, this is not a big
+change in practice. See the Appendix for thoughts on how to restore
+soundness in the presence of contravariance.
 
 # Alternatives
 
