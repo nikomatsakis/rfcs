@@ -12,8 +12,12 @@ and inconvenient ([#23442]).
 - Simplify the outlives relation to be syntactically based
 - Specify improved rules for the outlives relation and projections
 
-The proposes changes here are backwards incompatible. The impact has
-been evaluated and found to be quite minimal.
+The proposes changes here are backwards incompatible; this is
+justified by the need to fix a soundness problem. The impact has been
+evaluated and found to be quite minimal. Moreover, by simplifying and
+improving the rules, the changes also make the compiler accept
+reasonable code that currenty fails to compile (e.g. the example from
+[#23442]).
 
 # Motivation
 
@@ -40,7 +44,7 @@ When associated types were introduced in [RFC 195], some new rules
 were required to decide when an "outlives relation" involving a
 projection (e.g., `I::Item: 'a`) should hold. The initial rules were
 [very conservative][#22246]. This led to the rules from [RFC 192]
-being adapted [adapted] to cover associated type projections like
+being [adapted] to cover associated type projections like
 `I::Item`. Unfortunately, these adapted rules are not ideal, and can
 still lead to [annoying errors in some situations][#23442]. Finding a
 better solution has been on the agenda for some time.
