@@ -388,9 +388,10 @@ that result implicitly, we can see why variance on fns causes problems:
     for<'a,'b> where<'b:'a, T:'b> fn(&'a &'b T, &'b T) -> &'a T 
     <:
     for<'a,'b> fn(&'static &'static T, &'b T) -> &'a T
+    ? (today yes, under this RFC no)
     
-Clearly, this is an unsound subtyping relation (and yet it holds
-today).
+Clearly, this subtype relationship should not hold, because the where
+clauses in the subtype are not implied by the supertype.
 
 [RFC 192]: https://github.com/rust-lang/rfcs/blob/master/text/0192-bounds-on-object-and-generic-types.md
 [RFC 195]: https://github.com/rust-lang/rfcs/blob/master/text/0195-associated-items.md
