@@ -158,8 +158,12 @@ relatively compact. This avoids "long distance" errors.
 
 ### Shortcomings today
 
-Unfortunately, 
-
+Unfortunately, enforcement of WF bounds is somewhat haphazard today.
+For example, for a type like `[T]`, we do not currently require that
+`T: Sized` holds (e.g., [#21748]), and we do not enforce
+well-formedness for associated type definitions in impls. We need to
+make enforcement more uniform and consistent, both for soundness and
+to help users set expectations.
 
 # Detailed Design
 
@@ -232,6 +236,14 @@ where-clauses may contain higher-ranked bounds, we do not check that
 the types appearing in those where-clauses are well-formed at the
 declaration, but rather later, during trait checking, when we know
 that all higher-ranked lifetimes are instantiated.
+
+**Note:** If the types in the fn signature, do not involve
+higher-ranked lifetimes, we could choose to enforce well-formedness in
+that case. But it's important we not rely on that, since some of the
+types may not be checked. Another option is to add the implied bounds
+into the environment when checking that the argument types are
+well-formed. This would be consistent but more challenging to
+implement.
 
 #### Implied bounds
 
@@ -339,3 +351,4 @@ None.
 [#24461]: https://github.com/rust-lang/rust/pull/24461
 [#25860]: https://github.com/rust-lang/rust/issues/25860
 [#23938]: https://github.com/rust-lang/rust/pull/23938
+[#21748]: https://github.com/rust-lang/rust/issues/21748
