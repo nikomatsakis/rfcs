@@ -339,6 +339,59 @@ None.
 
 # Appendix: for/where, an alternative view
 
+The natural generalization of our current `fn` types is adding the
+ability to attach arbitrary where clauses to higher-ranked types. That
+is, a type like `for<'a,'b> fn(&'a &'b T)` might be written out more
+explicitly by adding the implied bounds as explicit where-clauses
+attached to the `for`:
+
+    for<'a,'b> where<'b:'a, T:'b> fn(&'a &'b T)
+    
+These where-clauses must be discharged before the fn can be called.
+They can also be discharged through subtyping, if no higher-ranked
+regions are involved: that is, there might be a typing rule that
+allows a where clause to be dropped from the type so long as it is
+moved to the environment. (Similarly, having fewer where clauses would
+be a subtype of having more.)
+
+You can view the current notion of implied bounds as being a more
+limited form of this formalism where the `where` clauses are exactly
+the implied bounds of the argument types. However, making the `where`
+clauses explicit has some advantages, because it means that one can
+vary the types of the arguments (via contravariance) while leaving the
+where clauses intact.
+
+For example, if you had a function:
+
+    fn foo<'a,'b,T>(&'a &'b T) { ... }
+
+Under this RFC, the type of this function is:
+
+    for<'a,'b> fn(&'a &'b T)
+    
+Under the for/where scheme, the full type would be:
+
+    for<'a,'b> where<'b:'a, T:'b> fn(&'a &'b T)
+    
+Now, if we upcast this type to only accept static data as argument,
+the where clauses are unaffected:
+
+    for<'a,'b> where<'b:'a, T:'b> fn(&'static &'static T)
+    
+Viewed this way, we can see why the current fn types (in which one
+cannot write where clauses explicitly) are invariant: changing the
+argument types is fine, but it also changes the where clauses, and the
+new where clauses are not a superset of the old ones, so the subtyping
+relation does not hold. That is, if we write out the implicit where clauses
+that result implicitly, we can see why variance on fns causes problems:
+
+    for<'a,'b> where<'b:'a, T:'b> fn(&'a &'b T, &'b T) -> &'a T 
+    <:
+    for<'a,'b> fn(&'static &'static T, &'b T) -> &'a T
+    
+Clearly, this is an unsound subtyping relation (and yet it holds
+today).
+
 [RFC 192]: https://github.com/rust-lang/rfcs/blob/master/text/0192-bounds-on-object-and-generic-types.md
 [RFC 195]: https://github.com/rust-lang/rfcs/blob/master/text/0195-associated-items.md
 [RFC 447]: https://github.com/rust-lang/rfcs/blob/master/text/0447-no-unused-impl-parameters.md
