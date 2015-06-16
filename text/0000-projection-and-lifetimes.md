@@ -67,20 +67,20 @@ that can occur.
 
 ### Effect of the changes
 
-The detailed design section of this RFC dives into the details of the
-type-system rules.  This section is intended to summarize the effect
-of these changes on existing Rust code.  We cover examples of code
-that used to compile but now does not, and describe what changes are
-needed to make it compile again. We also cover examples of code that
+This section is intended to summarize the effect of these changes on
+existing Rust code. (Detailed coverage of the rules can be found
+below, in the detailed design section.) We cover examples of code that
+used to compile but now does not, and describe what changes are needed
+to make it compile again. We also cover examples of code that
 previously failed to compile but now does.
 
 #### Understanding the meaning of `T: 'a` 
 
 This RFC modifies the definition of `<Type>: 'a` to be rather simpler
-than it was before. Essentially, the rules say that `<Type>: 'a` holds
-if every lifetime that appears in `<Type>` outlives `'a`. So if you
-have a type like `Box<&'x i32>`, then `Box<&'x i32>: 'a` holds if `'x:
-'a`.
+than it was before. Essentially, the new rules say that `<Type>: 'a`
+holds if every type and lifetime parameter that appears in `<Type>`
+outlives `'a`. So if you have a type like `Box<&'x Y>`, where `Y` is a
+type parameter, then `Box<&'x Y>: 'a` holds if `'x: 'a` and `Y: 'a`.
 
 Examples:
 
@@ -89,21 +89,24 @@ Examples:
 - `for<'x> fn(&'x &'y i32): 'a` holds if `'y: 'a`. Note that `'x: 'a`
   is not required. This is because `'x` is bound within the type
   itself and is not a specific lifetime yet.
-
+  
 #### Fns, trait objects, and lifetimes
 
-Previously, the rule for when `<Type>: 'a` holds was more subtle. It reasoned
-about what kinds of data was actually reachable, and ensured that all of this
-data outlived `'a`, but it did not impose restrictions on parts of the type
-that don't represent reachable data.
+The reason that this change is not entirely backwards compatible is
+that the older rules for when `<Type>: 'a` holds were somewhat more
+subtle. The older rules reasoned about what kinds of data was actually
+reachable, and ensured that all of this data outlived `'a`, but they
+did not impose restrictions on parts of the type that don't represent
+reachable data.
 
-This is easiest to see with a fn type. Previously, `fn(&'x i32):
-'static` would *always* hold, even though `'x: 'static` is not
-true. The reason for this was that the fn pointer itself doesn't
-*contain* any data at all, and certainly no data with the lifetime
-`'x`. Rather, when called, it will be *given* data with that lifetime.
-The newer rules don't draw such fine distinctions. Similar logic
-applies to type parameters on trait objects.
+The difference between the old and new rules is easiest to see with a
+fn type. Previously, `fn(&'x i32): 'static` would *always* hold, even
+though `'x: 'static` is not true. The reason for this was that the fn
+pointer itself doesn't *contain* any data at all, and certainly no
+data with the lifetime `'x`. Rather, when called, it will be *given*
+data with that lifetime.  The newer rules don't draw such fine
+distinctions. Similar logic applies to type parameters on trait
+objects.
 
 The main place that these changes break normal code is in struct definitions
 like the following:
@@ -113,6 +116,8 @@ like the following:
 struct SomeStruct<'a,T> {
     &'a SomeTrait<T>
 }
+
+trait SomeTrait<T> { }
 ```
 
 This struct now requires a `T:'a` declaration, because `SomeTrait<T>`
@@ -124,7 +129,40 @@ appears inside a borrowed reference of lifetime `'a` and thus
 struct SomeStruct<'a,T:'a> {
     &'a SomeTrait<T>
 }
+
+trait SomeTrait<T> { }
 ```
+
+#### Projections
+
+Associated type projections, like `X::Item`, are somewhat different
+than other types, because they are defined through the trait system.
+The older rules had two ways to decide whether `X::Item: 'a`:
+
+- consult the where-clauses that are in scope (e.g., `where X::Item: 'a`).
+- consult the trait definition (e.g., the trait might say `type
+  Item: 'static` or something like that).
+
+However, these two rules are not sufficient in most real-world cases.
+For example, even a simple function like this one is actually illegal:
+
+```rust
+fn next<I:Iterator>(iter: &mut I) -> I::Item {
+    iter.next().unwrap()
+}
+```
+
+For this function to be legal, the compiler must know that `I::Item`
+is valid during the function body, and in fact neither of the above
+rules tell us that. After all, there are no where clauses, and in this
+case the trait definition for `Iterator` doesn't say anything about
+the lifetimes involved in the output. Of course, the code above
+currently compiles, but that is due to a bug ([#24662]).
+
+This RFC adds a new rule which says that we can conclude that
+`I::Item: 'a` if `I: 'a` --- or, more generally, if all the inputs to
+the projections outlive `'a` (e.g., a projection like `<A as
+Trait<'b,C>>::Item` outlives `'a` if `A: 'a`, `'b: 'a`, and `C: 'a`).
 
 # Detailed design
 
@@ -365,6 +403,32 @@ need to see that the trait reference `<Foo as Iterator>` doesn't have
 any lifetimes or type parameters in it, and hence the impl cannot
 refer to any lifetime or type parameters.
 
+### Implementation complications
+
+One complication for the implementation is that there are so many
+potential outlives rules for projections. In particular, the rule that
+says `<P0 as Trait<P1..Pn>>>: 'a` holds if `Pi: 'a` is not an "if and
+only if" rule. So, for example, if we know that `T: 'a` and `'b: 'a`,
+then we know that `<T as Trait<'b>>:: Item: 'a` (for any trait and
+item), but not vice versa. This complicates inference significantly,
+since if variables are involved, we do not know whether to create
+edges between the variables or not (put another way, the simple
+dataflow model we are currently using doesn't truly suffice for these
+rules).
+
+This complication is unfortunate, but to a large extent already exists
+with where-clauses and trait matching (see e.g. [#21974]). (Moreover,
+it seems to be inherent to the concept of assocated types, since they
+take several inputs (the parameters to the trait) which may or may not
+be related to the actual type definition in question.)
+
+For the time being, the current implementation takes a pragmatic
+approach based on heuristics. It tries to avoid adding edges to the
+region graph in various common scenarios, and in the end falls back to
+enforcing conditions that may be stricter than necessary, but which
+certainly suffice. We have not yet encountered an example in practice
+where the current implementation rules do not suffice.
+
 # Drawbacks
 
 N/A
@@ -387,6 +451,7 @@ None.
 [adapted]: https://github.com/rust-lang/rust/issues/22246#issuecomment-74186523
 [#22077]: https://github.com/rust-lang/rust/issues/22077
 [#24461]: https://github.com/rust-lang/rust/pull/24461
+[#21974]: https://github.com/rust-lang/rust/issues/21974
 
 # Appendix
 
