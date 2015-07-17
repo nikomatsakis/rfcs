@@ -685,6 +685,19 @@ probably shouldn't. Consider for example if we had a type like
 rules would accept it, because `HashMap<NoHash,u32>` appears inside a
 fn signature.
 
+Note that `fn` types do not require that `T0..Tn` be `Sized`.  This is
+intentional. The limitation that only sized values can be passed as
+argument (or returned) is enforced at the time when a fn is actually
+called, as well as in actual fn definitions, but is not considered
+fundamental to fn types thesmelves. There are several reasons for
+this. For one thing, it's forwards compatible with passing DST by
+value. For another, it means that non-defaulted trait methods to do
+not have to show that their argument types are `Sized` (this will be
+checked in the implementations, where more types are known). Since the
+implicit `Self` type parameter is not `Sized` by default ([RFC 546]),
+requiring that argument types be `Sized` in trait definitions proves
+to be an annoying annotation burden.
+
 The object type rule is similar, though it includes an extra clause:
 
     WfObject:
@@ -771,10 +784,16 @@ from the struct declaration.
 
 **Function items.** For function items, the environment consists of
 all the where-clauses from the fn, as well as implied bounds derived
-from the fn's argument types. These are then used to check the WF of
-all fn argument types, the fn return type, and any types that appear
-in the fns body. These WF requirements are imposed at each fn or
-associated fn definition (as well as within trait items).
+from the fn's argument types. These are then used to check that the
+following are well-formed:
+
+- argument types;
+- return type;
+- where clauses;
+- types of local variables.
+
+These WF requirements are imposed at each fn or associated fn
+definition (as well as within trait items).
 
 **Trait impls.** In a trait impl, we assume that all types appearing
 in the impl header are well-formed. This means that the initial
@@ -782,7 +801,8 @@ environment for an impl consists of the impl where-clauses and implied
 bounds derived from its header. Example: Given an impl like
 `impl<'a,T> SomeTrait for &'a T`, the environment would be `T: Sized`
 (explicit where-clause) and `T: 'a` (implied bound derived from `&'a
-T`). This environment is used as the starting point for checking the items:
+T`). This environment is used as the starting point for checking the
+items:
 
 - Associated types must be WF in the trait environment.
 - The types of associated constants must be WF in the trait environment.
@@ -858,6 +878,7 @@ regions, so probably yes.
 [#22077]: https://github.com/rust-lang/rust/issues/22077
 [#24461]: https://github.com/rust-lang/rust/pull/24461
 [#21974]: https://github.com/rust-lang/rust/issues/21974
+[RFC 546]: 0546-Self-not-sized-by-default.md
 
 # Appendix
 
