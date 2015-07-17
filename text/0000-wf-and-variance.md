@@ -216,34 +216,78 @@ declare one), but we'll take those basic conditions for granted.
 The following two rules are interesting. For fn arguments and trait
 objects, there may be higher-ranked lifetimes involved. This means
 that we cannot (in general) check that the types involved are
-well-formed. Therefore, we stop at these boundaries.
+well-formed. Therefore, we have somewhat different treatment around
+these boundaries.
+
+As an example of why we have to be careful, consider a function
+signature like:
+
+    for<'a> fn(x: &'a T)
+    
+For the argument type `&'a T` to be well-formed, we must know that `T:
+'a`, but since we do not yet know what `'a` is, we can't check
+that. We could check something stronger, like `for<'a> T: 'a`, but
+that is too strong -- it says that `T` outlives all regions, and
+effectively is the same as `T: 'static`.
+
+The approach we take instead is to defer WF enforcement until specific
+points where the higher-ranked lifetimes are guaranteed to have been
+instantiated. In the case of a `fn` type, this is the point where the
+`fn` is called. In the case of a trait, this is the point of
+projection, meaning either a method call or associated type reference.
+
+In accordance, the WF rules on fns and object types are very lax
+indeed (but see the *unresolved questions* sections for some
+alternatives).
+
+Let's start with the rule for fn types:
 
     WfFn:
       --------------------------------------------------
       for<ℓ..> fn(T1..Tn) -> T0
 
+Basically, this rule says that a `fn` type is *always* WF, regardless
+of what types it references.  This certainly accepts a type like
+`for<'a> fn(x: &'a T)`.  However, it also accepts some types that it
+probably shouldn't. Consider for example if we had a type like
+`NoHash` that is not hashable; in that case, it'd be nice if
+`fn(HashMap<NoHash, u32>)` were not considered well-formed. But these
+rules would accept it, because `HashMap<NoHash,u32>` appears inside a
+fn signature.
+
+The object type rule is similar, though it includes an extra clause:
+
     WfObject:
+      Λ = implicit region bounds from Ri
+      ∀i. Λ(i): ℓ
       --------------------------------------------------
       R0..Rn+ℓ WF
 
-The WF of types in a fn signature or trait object is deferred to the
-point in type-checking where the fn is called or the trait object is
-used, as we are guaranteed that all higher-ranked lifetimes are fully
-instantiated at that point.
+The clauses here state that the explicit lifetime bound `ℓ` must be
+an approximation for the the implicit bounds derived from
+the trait definitions. That is, if you have a trait definition like
+
+```rust
+trait Foo: 'static { ... }
+```
+
+and a trait object like `Foo+'x`, when we require that `'static: 'x`
+(which is true, clearly, but in some cases the implicit bounds from
+traits are not `'static` but rather some named lifetime).
+
+Given that we are not enforcing that (e.g) fn argument types are
+well-formed, we have to enforce the WF requirements at some other
+point. We call this *deferred enforcement*. The idea is that we
+enforce WF rules at the point where the higher-ranked lifetimes are
+fully instantiated, which means either when the fn is called, or when
+a method of the trait object is invoked (more generally, whenever we
+project out of a trait).
 
 We employ a similar deferral strategy with where-clauses: because
 where-clauses may contain higher-ranked bounds, we do not check that
 the types appearing in those where-clauses are well-formed at the
 declaration, but rather later, during trait checking, when we know
 that all higher-ranked lifetimes are instantiated.
-
-**Note:** If the types in the fn signature, do not involve
-higher-ranked lifetimes, we could choose to enforce well-formedness in
-that case. But it's important we not rely on that, since some of the
-types may not be checked. Another option is to add the implied bounds
-into the environment when checking that the argument types are
-well-formed. This would be consistent but more challenging to
-implement.
 
 #### Implied bounds
 
@@ -282,7 +326,8 @@ check that all field types are WF given the where-clauses from the struct.
 all the where-clauses from the fn, as well as implied bounds derived
 from the fn's argument types. These are then used to check the WF of
 all fn argument types, the fn return type, and any types that appear
-in the fns body.
+in the fns body. These WF requirements are imposed at each fn or
+associated fn definition (as well as within trait items).
 
 **Trait impls.** In a trait impl, we assume that all types appearing
 in the impl header are well-formed. This means that the initial
@@ -300,11 +345,11 @@ as if they were normal functions.
 in the same fashion as impls, except that there are no implied bounds
 from the impl header.
 
-**Type aliases.** Type aliases are currently not checked for WF, which
-is harmless since they are transparent to type-checking, effectively.
-If we chose, we could check for WF, but it would mean more
-annotations, for example: `type Ref<'a,T> = &'a T` would require a `T:
-'a` annotation.
+**Type aliases.** Type aliases are currently not checked for WF, since
+they are considered transparent to type-checking. It's not clear that
+this is the best policy, but it seems harmless, since the WF rules
+will still be applied to the expanded version. See the *Unresolved
+Questions* for some discussion on the alternatives here.
 
 Several points in the list above made use of *implied bounds* based on
 assuming that various types were WF. We have to ensure that those
@@ -320,8 +365,8 @@ the call is WF.
 **Projections of types, fns, and consts.** When we project an item out
 of a trait, we must also validate that the types in the trait
 reference are well-formed. Examples of projections are calling a trait
-function (or obtaining it through UFCS), normalizing a projected like,
-or using an associated constant. Checking the types in the trait
+function (or obtaining it through UFCS), normalizing an associated
+type, or using an associated constant. Checking the types in the trait
 reference implies that the implied bounds from the impl are correct at
 the time when members of the impl are accessed.
 
@@ -335,11 +380,67 @@ soundness in the presence of contravariance.
 
 # Alternatives
 
-N/A
+Hard to specify. See the next section.
 
 # Unresolved questions
 
-None.
+There are a couple of areas where the precise enforcement of WF rules
+is a bit unclear: type aliases and higher-ranked types.
+
+**Type aliases.** Currently, when you define a type alias, the WF rules
+are not applied, which means that it is possible to write something like:
+
+```rust
+type Bad = HashMap<NoHash, u32>;
+```
+
+Here, `NoHash` is supposed to be some non-hashable type, and hence one
+might like to see an error since `HashMap` requires its keys to be
+hashable. However, today, you will not see an error at the definition
+site, but rather the error will be deferred to point where `Bad` is
+used. This can be confusing for users, and it seems like it would be
+more consistent to enforce WF rules at the type definition
+site. However, this will result in other code requiring more
+annotation, and the impact on backwards compatbility has not yet been
+evaluated. (For example, `type Ref<'a,T> = &'a T` would require a `T:
+'a` annotation, whereas it does not today.)
+
+**Higher-ranked types.** In a sense, higher-ranked types are in a
+similar situation. The rules in this RFC basically suspend WF
+enforcement within fn and trait object types, deferring enforcement
+the point of enforcement to the point of call or projection (much like
+type aliases are not enforced at their definition). This mean that a
+type like `fn(HashMap<NoHash, u32>)` is legal, even though it cannot
+be called.
+
+In both these cases, the alternatives are similar:
+
+- **Strict enforcement.** This will cause (unmeasured) breakage for
+  type aliases, but is simply unworkable for higher-ranked types
+  without some kind of further language extension, due to cases like
+  `for<'a> fn(x: &'a Foo)`, where the requirement that `Foo: 'a`
+  cannot be checked without knowing `'a` in advance.
+- **Benefit of the doubt.** We compute the WF requirements for the
+  types and report an error only if we can show that they will never
+  hold. For example, a type like `fn(HashMap<NoHash, u32>)` would get
+  an error, because we know that `NoHash` does not implement `Hash`,
+  but `for<'a> fn(&'a Foo)` would be legal, because there may exist a
+  lifetime `'a` where `Foo: 'a` holds. This is not quite as simple as
+  checking for cases where no higher-ranked regions are in use; for
+  example, a type like `for<'a> fn(HashMap<&'a NoHash, u32>)` would
+  still be in error, because there is no lifetime `'a` where `&'a
+  NoHash: Hash` (since, in general, `&T: Hash` only if `T: Hash`).
+
+The *benefit of the doubt* approach will still trigger early errors
+when appropriate, but will avoid breaking existing code for the most
+part (though it is possible to have dead code that does not meet WF
+obligations, which would become an error). Unfortunately, this scheme
+has not been implemented, and its impact has not yet been evaluated.
+
+The opinion of the author is that we should implement the scheme and
+measure the impact. It should also be possible to phase in a "benefit
+of the doubt" scheme, or else implement the scheme but report warnings
+instead of errors.
 
 # Appendix: for/where, an alternative view
 
