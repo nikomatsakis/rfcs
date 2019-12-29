@@ -1,6 +1,6 @@
 - Feature Name: export-executable-symbols
 - Start Date: 2019-12-28
-- RFC PR: [rust-lang/rfcs#0000](https://github.com/rust-lang/rfcs/pull/0000)
+- RFC PR: [rust-lang/rfcs#2841](https://github.com/rust-lang/rfcs/pull/2841)
 - Rust Issue: [rust-lang/rust#0000](https://github.com/rust-lang/rust/issues/0000)
 
 # Summary
