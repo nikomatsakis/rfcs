@@ -101,6 +101,12 @@ Most people don't really notice it, for good or for ill.
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
+We could introduce a new source annotation, `#[export]`.  For backwards
+compatibility with current behavior, `#[no_mangle]` symbols could be exported
+by default - and possibly disabled with `#[export(false)]`.  This would
+reduce the need to hide this change to compiler/linker behavior behind a
+compiler flag or crate annotation.
+
 Maybe other options to control what symbols get exported?  Although I'd fear
 turning rustc into yet another linker script implementation, so maybe not.
 
