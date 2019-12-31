@@ -78,6 +78,7 @@ This is *very* simple to implement, leverages existing code to enable it to do e
 Alternatives:
 
 - Unconditionally export symbols from executables instead of introducing a new compiler flag.
+- Introduce a crate-level attribute instead of a compiler flag (`#![export_all_symbols]`? `#![export_symbols]`?)
 - Write *yet another* cargo subcommand to install/remember for interop testing instead of using cargo test.
 - Write interop tests exclusively as integration tests, in an entirely separate crate, that can load the testee as a dylib.
 - Continue abusing LINK, writing a tool to auto-generate .defs via build scripts - possibly by reading metadata from other tools.
