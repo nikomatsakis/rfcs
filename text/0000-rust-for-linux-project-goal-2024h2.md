@@ -91,7 +91,7 @@ Our goal for 2024 is to close those gaps, most likely by implementing and stabil
 ### Labeled goto in inline assembler and extended `offset_of!` support
 
 These are two smaller extensions required by the Rust-for-Linux kernel support.
-Both have been implemented but more experience and/or may be needed before stabilization is accepted.
+Both have been implemented but more experience and/or development may be needed before stabilization is accepted.
 
 ### RFL on Rust CI
 
@@ -133,6 +133,8 @@ The RFL project builds the stdlib with a number of configuration options to elim
 ### Code-generation features and compiler options
 
 The RFL project requires various code-generation options. Some of these are related to custom features of the kernel, such as [X18 support][#748] but others are codegen options like sanitizers and the like. Some subset of the options listed on [RFL#2][] will need to be stabilized to support being built with all required configurations, but working out the precise set will require more effort.
+
+### Ergonomic improvements
 
 Looking further afield, possible future work includes more ergonomic versions of the [special patterns for safe pinned initialization](https://rust-for-linux.com/the-safe-pinned-initialization-problem) or a solution to [custom field projection for pinned types or other smart pointers](https://github.com/rust-lang/rfcs/pull/3318).
 
